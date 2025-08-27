@@ -1,7 +1,7 @@
 // src/pages/VideoPlayer.js
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { api, getSasUrl } from '../api'; // ← use configured API + SAS helper
 
 function VideoPlayer() {
   const { id } = useParams();
@@ -11,39 +11,78 @@ function VideoPlayer() {
   const [rating, setRating] = useState(0);
   const [isVisible, setIsVisible] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [playerSrc, setPlayerSrc] = useState('');
+  const [srcError, setSrcError] = useState('');
+  const [loadingSrc, setLoadingSrc] = useState(false);
+
   const role = localStorage.getItem('role');
   const navigate = useNavigate();
 
+  // Base for non-SAS fallback (when video.videoUrl is like '/uploads/...')
+  const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+
   useEffect(() => {
     setIsVisible(true);
-    
     const handleMouseMove = (e) => {
       setMousePosition({
         x: (e.clientX / window.innerWidth) * 100,
         y: (e.clientY / window.innerHeight) * 100,
       });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
+  // Load videos list and pick the one by id (using Azure API, not localhost)
   useEffect(() => {
-    axios.get(`http://localhost:5000/api/videos`)
-      .then(res => {
-        const found = res.data.find(v => v._id === id);
+    (async () => {
+      try {
+        const res = await api.get('/api/videos');
+        const found = res.data.find((v) => v._id === id);
         if (found) setVideo(found);
         else setError('⚠️ Video not found.');
-      })
-      .catch(err => {
+      } catch (err) {
         console.error(err);
         setError('❌ Failed to load video.');
-      });
-
-    // Increment view count
-    axios.post(`http://localhost:5000/api/videos/${id}/view`)
-      .catch(err => console.error('View count update failed:', err));
+      }
+      // Increment view count (best-effort)
+      try {
+        await api.post(`/api/videos/${id}/view`);
+      } catch (err) {
+        console.error('View count update failed:', err);
+      }
+    })();
   }, [id]);
+
+  // Decide the playable src:
+  // - If blobName exists → request SAS from backend and use that
+  // - Else if videoUrl exists → use absolute URL or prefix with API_BASE
+  useEffect(() => {
+    if (!video) return;
+    setPlayerSrc('');
+    setSrcError('');
+    setLoadingSrc(true);
+    (async () => {
+      try {
+        if (video.blobName) {
+          const { sasUrl } = await getSasUrl(video.blobName, 3600); // 1 hour
+          setPlayerSrc(sasUrl);
+        } else if (video.videoUrl) {
+          const src = video.videoUrl.startsWith('http')
+            ? video.videoUrl
+            : `${API_BASE}${video.videoUrl}`;
+          setPlayerSrc(src);
+        } else {
+          setSrcError('No video source available for this item.');
+        }
+      } catch (e) {
+        console.error(e);
+        setSrcError('Failed to generate video URL.');
+      } finally {
+        setLoadingSrc(false);
+      }
+    })();
+  }, [video, API_BASE]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -52,17 +91,17 @@ function VideoPlayer() {
   };
 
   const handleComment = async () => {
-    const user = localStorage.getItem('token') ? JSON.parse(atob(localStorage.getItem('token').split('.')[1]))?.email : '';
+    const token = localStorage.getItem('token');
+    const user = token ? JSON.parse(atob(token.split('.')[1]))?.email : '';
     if (!newComment.trim() || !user) {
       alert('Please write a comment and ensure you are logged in.');
       return;
     }
-
     try {
-      await axios.post(`http://localhost:5000/api/videos/${id}/comment`, { user, text: newComment });
+      await api.post(`/api/videos/${id}/comment`, { user, text: newComment });
       setVideo((prev) => ({
         ...prev,
-        comments: [...prev.comments, { user, text: newComment }],
+        comments: [...(prev?.comments || []), { user, text: newComment }],
       }));
       setNewComment('');
     } catch (err) {
@@ -72,17 +111,17 @@ function VideoPlayer() {
   };
 
   const handleRating = async () => {
-    const user = localStorage.getItem('token') ? JSON.parse(atob(localStorage.getItem('token').split('.')[1]))?.email : '';
+    const token = localStorage.getItem('token');
+    const user = token ? JSON.parse(atob(token.split('.')[1]))?.email : '';
     if (!rating || !user) {
       alert('Set a rating and make sure you are logged in.');
       return;
     }
-
     try {
-      await axios.post(`http://localhost:5000/api/videos/${id}/rate`, { user, score: rating });
+      await api.post(`/api/videos/${id}/rate`, { user, score: rating });
       setVideo((prev) => ({
         ...prev,
-        ratings: [...prev.ratings, { user, score: rating }],
+        ratings: [...(prev?.ratings || []), { user, score: rating }],
       }));
       setRating(0);
     } catch (err) {
@@ -107,438 +146,181 @@ function VideoPlayer() {
     },
     mouseGradient: {
       position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+      top: 0, left: 0, right: 0, bottom: 0,
       opacity: 0.3,
       background: `radial-gradient(circle at ${mousePosition.x}% ${mousePosition.y}%, rgba(147, 51, 234, 0.3) 0%, transparent 50%)`
     },
     navbar: {
-      position: 'relative',
-      zIndex: 20,
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      padding: '16px 32px',
-      background: 'rgba(255, 255, 255, 0.05)',
-      backdropFilter: 'blur(10px)',
-      borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
+      position: 'relative', zIndex: 20, display: 'flex',
+      justifyContent: 'space-between', alignItems: 'center',
+      padding: '16px 32px', background: 'rgba(255, 255, 255, 0.05)',
+      backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
     },
-    navLeft: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '24px'
-    },
-    navBrand: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      textDecoration: 'none'
-    },
+    navLeft: { display: 'flex', alignItems: 'center', gap: '24px' },
+    navBrand: { display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' },
     navBrandIcon: {
       padding: '8px',
       background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-      borderRadius: '50%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
+      borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'
     },
     navBrandText: {
-      fontSize: '1.5rem',
-      fontWeight: 'bold',
+      fontSize: '1.5rem', fontWeight: 'bold',
       background: 'linear-gradient(135deg, #ffffff, #c4b5fd)',
-      WebkitBackgroundClip: 'text',
-      WebkitTextFillColor: 'transparent',
-      backgroundClip: 'text',
+      WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
     },
-    navRight: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px'
-    },
+    navRight: { display: 'flex', alignItems: 'center', gap: '16px' },
     navLink: {
-      color: '#d1d5db',
-      textDecoration: 'none',
-      padding: '8px 16px',
-      borderRadius: '8px',
-      transition: 'all 0.3s ease',
-      fontWeight: '500'
+      color: '#d1d5db', textDecoration: 'none', padding: '8px 16px', borderRadius: '8px',
+      transition: 'all 0.3s ease', fontWeight: '500'
     },
     backButton: {
-      padding: '8px 16px',
-      background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-      color: 'white',
-      border: 'none',
-      borderRadius: '8px',
-      fontWeight: '600',
-      cursor: 'pointer',
-      transition: 'all 0.3s ease',
-      textDecoration: 'none',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
+      padding: '8px 16px', background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+      color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600',
+      cursor: 'pointer', transition: 'all 0.3s ease', textDecoration: 'none',
+      display: 'flex', alignItems: 'center', gap: '8px'
     },
     logoutBtn: {
-      padding: '8px 16px',
-      background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
-      color: 'white',
-      border: 'none',
-      borderRadius: '8px',
-      fontWeight: '600',
-      cursor: 'pointer',
-      transition: 'all 0.3s ease',
+      padding: '8px 16px', background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
+      color: 'white', border: 'none', borderRadius: '8px', fontWeight: '600',
+      cursor: 'pointer', transition: 'all 0.3s ease',
     },
-    content: {
-      position: 'relative',
-      zIndex: 10,
-      padding: '32px',
-      maxWidth: '1200px',
-      margin: '0 auto'
-    },
+    content: { position: 'relative', zIndex: 10, padding: '32px', maxWidth: '1200px', margin: '0 auto' },
     hero: {
-      opacity: isVisible ? 1 : 0,
-      transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
-      transition: 'all 1s ease-out',
-      marginBottom: '32px'
+      opacity: isVisible ? 1 : 0, transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
+      transition: 'all 1s ease-out', marginBottom: '32px'
     },
     title: {
-      fontSize: '3rem',
-      fontWeight: 'bold',
+      fontSize: '3rem', fontWeight: 'bold',
       background: 'linear-gradient(135deg, #ffffff, #c4b5fd, #fbbf24)',
-      WebkitBackgroundClip: 'text',
-      WebkitTextFillColor: 'transparent',
-      backgroundClip: 'text',
-      margin: '0 0 16px 0',
-      textAlign: 'center',
-      lineHeight: 1.2
+      WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+      margin: '0 0 16px 0', textAlign: 'center', lineHeight: 1.2
     },
     errorBanner: {
-      background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
-      borderRadius: '16px',
-      padding: '16px 24px',
-      marginBottom: '32px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-      color: 'white',
-      boxShadow: '0 25px 50px -12px rgba(220, 38, 38, 0.25)'
+      background: 'linear-gradient(135deg, #dc2626, #b91c1c)', borderRadius: '16px',
+      padding: '16px 24px', marginBottom: '32px', display: 'flex', alignItems: 'center',
+      gap: '12px', color: 'white', boxShadow: '0 25px 50px -12px rgba(220, 38, 38, 0.25)'
     },
     videoContainer: {
-      opacity: isVisible ? 1 : 0,
-      transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
-      transition: 'all 1s ease-out 0.2s',
-      background: 'rgba(255, 255, 255, 0.05)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '24px',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      overflow: 'hidden',
-      marginBottom: '32px',
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+      opacity: isVisible ? 1 : 0, transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
+      transition: 'all 1s ease-out 0.2s', background: 'rgba(255, 255, 255, 0.05)',
+      backdropFilter: 'blur(10px)', borderRadius: '24px',
+      border: '1px solid rgba(255, 255, 255, 0.1)', overflow: 'hidden',
+      marginBottom: '32px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
     },
-    videoPlayer: {
-      width: '100%',
-      height: 'auto',
-      minHeight: '400px',
-      backgroundColor: '#000',
-      borderRadius: '20px 20px 0 0'
-    },
-    videoMeta: {
-      padding: '24px'
-    },
+    videoPlayer: { width: '100%', height: 'auto', minHeight: '400px', backgroundColor: '#000', borderRadius: '20px 20px 0 0' },
+    videoMeta: { padding: '24px' },
     metaGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-      gap: '16px',
-      marginBottom: '24px'
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+      gap: '16px', marginBottom: '24px'
     },
     metaCard: {
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '16px',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      padding: '20px',
-      transition: 'all 0.3s ease'
+      background: 'rgba(255, 255, 255, 0.1)', backdropFilter: 'blur(10px)',
+      borderRadius: '16px', border: '1px solid rgba(255, 255, 255, 0.1)',
+      padding: '20px', transition: 'all 0.3s ease'
     },
-    metaTitle: {
-      fontSize: '1.1rem',
-      fontWeight: '600',
-      color: 'white',
-      marginBottom: '8px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
-    },
-    metaValue: {
-      fontSize: '1rem',
-      color: '#d1d5db',
-      fontWeight: '500'
-    },
+    metaTitle: { fontSize: '1.1rem', fontWeight: '600', color: 'white', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' },
+    metaValue: { fontSize: '1rem', color: '#d1d5db', fontWeight: '500' },
     statsGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-      gap: '16px',
-      marginBottom: '32px'
+      display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+      gap: '16px', marginBottom: '32px'
     },
     statCard: {
-      background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
-      borderRadius: '16px',
-      padding: '20px',
-      textAlign: 'center',
-      color: '#1f2937',
-      boxShadow: '0 25px 50px -12px rgba(251, 191, 36, 0.25)',
-      transition: 'all 0.3s ease'
+      background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', borderRadius: '16px',
+      padding: '20px', textAlign: 'center', color: '#1f2937',
+      boxShadow: '0 25px 50px -12px rgba(251, 191, 36, 0.25)', transition: 'all 0.3s ease'
     },
-    statNumber: {
-      fontSize: '2rem',
-      fontWeight: 'bold',
-      marginBottom: '4px'
-    },
-    statLabel: {
-      fontSize: '0.9rem',
-      fontWeight: '600',
-      opacity: 0.8
-    },
+    statNumber: { fontSize: '2rem', fontWeight: 'bold', marginBottom: '4px' },
+    statLabel: { fontSize: '0.9rem', fontWeight: '600', opacity: 0.8 },
     interactionSection: {
-      opacity: isVisible ? 1 : 0,
-      transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
-      transition: 'all 1s ease-out 0.4s',
-      background: 'rgba(255, 255, 255, 0.05)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '24px',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      padding: '32px',
-      marginBottom: '32px',
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+      opacity: isVisible ? 1 : 0, transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
+      transition: 'all 1s ease-out 0.4s', background: 'rgba(255, 255, 255, 0.05)',
+      backdropFilter: 'blur(10px)', borderRadius: '24px', border: '1px solid rgba(255, 255, 255, 0.1)',
+      padding: '32px', marginBottom: '32px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
     },
-    interactionTitle: {
-      fontSize: '1.5rem',
-      fontWeight: '600',
-      color: 'white',
-      marginBottom: '24px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px'
-    },
-    ratingSection: {
-      marginBottom: '32px'
-    },
-    sectionLabel: {
-      display: 'block',
-      fontWeight: '600',
-      color: 'white',
-      marginBottom: '12px',
-      fontSize: '1.1rem'
-    },
-    ratingControls: {
-      display: 'flex',
-      gap: '16px',
-      alignItems: 'center'
-    },
+    interactionTitle: { fontSize: '1.5rem', fontWeight: '600', color: 'white', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' },
+    ratingSection: { marginBottom: '32px' },
+    sectionLabel: { display: 'block', fontWeight: '600', color: 'white', marginBottom: '12px', fontSize: '1.1rem' },
+    ratingControls: { display: 'flex', gap: '16px', alignItems: 'center' },
     ratingSelect: {
-      flex: 1,
-      maxWidth: '200px',
-      padding: '12px 16px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(10px)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      borderRadius: '12px',
-      color: 'white',
-      fontSize: '1rem',
-      transition: 'all 0.3s ease'
+      flex: 1, maxWidth: '200px', padding: '12px 16px', background: 'rgba(255, 255, 255, 0.1)',
+      backdropFilter: 'blur(10px)', border: '1px solid rgba(255, 255, 255, 0.2)',
+      borderRadius: '12px', color: 'white', fontSize: '1rem', transition: 'all 0.3s ease'
     },
-    commentSection: {
-      marginBottom: '24px'
-    },
+    commentSection: { marginBottom: '24px' },
     commentInput: {
-      width: '100%',
-      padding: '16px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      backdropFilter: 'blur(10px)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      borderRadius: '12px',
-      color: 'white',
-      fontSize: '1rem',
-      fontFamily: 'inherit',
-      resize: 'vertical',
-      minHeight: '120px',
-      transition: 'all 0.3s ease',
-      marginBottom: '16px'
+      width: '100%', padding: '16px', background: 'rgba(255, 255, 255, 0.1)',
+      backdropFilter: 'blur(10px)', border: '1px solid rgba(255, 255, 255, 0.2)',
+      borderRadius: '12px', color: 'white', fontSize: '1rem', fontFamily: 'inherit',
+      resize: 'vertical', minHeight: '120px', transition: 'all 0.3s ease', marginBottom: '16px'
     },
     primaryButton: {
-      padding: '12px 24px',
-      background: 'linear-gradient(135deg, #9333ea, #ec4899)',
-      color: 'white',
-      border: 'none',
-      borderRadius: '12px',
-      fontWeight: '600',
-      cursor: 'pointer',
-      transition: 'all 0.3s ease',
-      fontSize: '1rem',
+      padding: '12px 24px', background: 'linear-gradient(135deg, #9333ea, #ec4899)',
+      color: 'white', border: 'none', borderRadius: '12px', fontWeight: '600',
+      cursor: 'pointer', transition: 'all 0.3s ease', fontSize: '1rem',
       boxShadow: '0 25px 50px -12px rgba(147, 51, 234, 0.25)'
     },
     secondaryButton: {
-      padding: '12px 24px',
-      background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-      color: 'white',
-      border: 'none',
-      borderRadius: '12px',
-      fontWeight: '600',
-      cursor: 'pointer',
-      transition: 'all 0.3s ease',
-      fontSize: '1rem',
+      padding: '12px 24px', background: 'linear-gradient(135deg, #06b6d4, #0891b2)',
+      color: 'white', border: 'none', borderRadius: '12px', fontWeight: '600',
+      cursor: 'pointer', transition: 'all 0.3s ease', fontSize: '1rem',
       boxShadow: '0 25px 50px -12px rgba(6, 182, 212, 0.25)'
     },
     commentsDisplay: {
-      opacity: isVisible ? 1 : 0,
-      transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
-      transition: 'all 1s ease-out 0.6s',
-      background: 'rgba(255, 255, 255, 0.05)',
-      backdropFilter: 'blur(10px)',
-      borderRadius: '24px',
-      border: '1px solid rgba(255, 255, 255, 0.1)',
-      padding: '32px',
-      boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
+      opacity: isVisible ? 1 : 0, transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
+      transition: 'all 1s ease-out 0.6s', background: 'rgba(255, 255, 255, 0.05)',
+      backdropFilter: 'blur(10px)', borderRadius: '24px', border: '1px solid rgba(255, 255, 255, 0.1)',
+      padding: '32px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
     },
-    commentsTitle: {
-      fontSize: '1.5rem',
-      fontWeight: '600',
-      color: 'white',
-      marginBottom: '24px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px'
-    },
-    commentsList: {
-      maxHeight: '400px',
-      overflowY: 'auto',
-      padding: '8px'
-    },
-    commentItem: {
-      display: 'flex',
-      gap: '16px',
-      padding: '16px 0',
-      borderBottom: '1px solid rgba(255, 255, 255, 0.1)'
-    },
+    commentsTitle: { fontSize: '1.5rem', fontWeight: '600', color: 'white', marginBottom: '24px', display: 'flex', alignItems: 'center', gap: '12px' },
+    commentsList: { maxHeight: '400px', overflowY: 'auto', padding: '8px' },
+    commentItem: { display: 'flex', gap: '16px', padding: '16px 0', borderBottom: '1px solid rgba(255, 255, 255, 0.1)' },
     commentAvatar: {
-      width: '48px',
-      height: '48px',
-      background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-      borderRadius: '50%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '1.2rem',
-      flexShrink: 0
+      width: '48px', height: '48px', background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+      borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontSize: '1.2rem', flexShrink: 0
     },
-    commentContent: {
-      flex: 1,
-      minWidth: 0
-    },
-    commentAuthor: {
-      fontWeight: '600',
-      color: '#c4b5fd',
-      fontSize: '1rem',
-      marginBottom: '6px'
-    },
-    commentText: {
-      color: '#d1d5db',
-      fontSize: '1rem',
-      lineHeight: 1.6,
-      wordWrap: 'break-word'
-    },
+    commentContent: { flex: 1, minWidth: 0 },
+    commentAuthor: { fontWeight: '600', color: '#c4b5fd', fontSize: '1rem', marginBottom: '6px' },
+    commentText: { color: '#d1d5db', fontSize: '1rem', lineHeight: 1.6, wordWrap: 'break-word' },
     noComments: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-      color: '#9ca3af',
-      fontStyle: 'italic',
-      padding: '32px',
-      textAlign: 'center',
-      justifyContent: 'center',
-      fontSize: '1.1rem'
+      display: 'flex', alignItems: 'center', gap: '12px', color: '#9ca3af', fontStyle: 'italic',
+      padding: '32px', textAlign: 'center', justifyContent: 'center', fontSize: '1.1rem'
     }
   };
 
   return (
     <div style={styles.container}>
-      <style>
-        {`
-          .rating-select:focus,
-          .comment-input:focus {
-            outline: none !important;
-            border-color: rgba(147, 51, 234, 0.6) !important;
-            box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.2) !important;
-          }
-          
-          .comment-input::placeholder {
-            color: rgba(255, 255, 255, 0.5);
-          }
-          
-          .primary-button:hover {
-            transform: scale(1.05) !important;
-            box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.4) !important;
-          }
-          
-          .secondary-button:hover {
-            transform: scale(1.05) !important;
-            box-shadow: 0 25px 50px -12px rgba(6, 182, 212, 0.4) !important;
-          }
-          
-          .back-button:hover {
-            transform: scale(1.05) !important;
-            box-shadow: 0 25px 50px -12px rgba(6, 182, 212, 0.4) !important;
-          }
-          
-          .nav-link:hover {
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: #ffffff !important;
-          }
-          
-          .logout-btn:hover {
-            background: linear-gradient(135deg, #ef4444, #dc2626) !important;
-            transform: scale(1.05) !important;
-          }
-          
-          .meta-card:hover {
-            transform: translateY(-4px) !important;
-            box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.2) !important;
-          }
-          
-          .stat-card:hover {
-            transform: scale(1.05) !important;
-            box-shadow: 0 25px 50px -12px rgba(251, 191, 36, 0.4) !important;
-          }
-          
-          .comments-list::-webkit-scrollbar {
-            width: 8px;
-          }
-          
-          .comments-list::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 4px;
-          }
-          
-          .comments-list::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.3);
-            border-radius: 4px;
-          }
-          
-          .comments-list::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.5);
-          }
-          
-          @media (max-width: 768px) {
-            .title { font-size: 2rem !important; }
-            .meta-grid { grid-template-columns: 1fr !important; }
-            .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
-            .rating-controls { flex-direction: column !important; align-items: stretch !important; }
-            .navbar { flex-direction: column; gap: 16px; padding: 16px; }
-            .nav-left, .nav-right { flex-wrap: wrap; justify-content: center; }
-            .content { padding: 16px !important; }
-          }
-        `}
-      </style>
+      <style>{`
+        .rating-select:focus, .comment-input:focus {
+          outline: none !important;
+          border-color: rgba(147, 51, 234, 0.6) !important;
+          box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.2) !important;
+        }
+        .comment-input::placeholder { color: rgba(255, 255, 255, 0.5); }
+        .primary-button:hover { transform: scale(1.05) !important;
+          box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.4) !important; }
+        .secondary-button:hover { transform: scale(1.05) !important;
+          box-shadow: 0 25px 50px -12px rgba(6, 182, 212, 0.4) !important; }
+        .back-button:hover { transform: scale(1.05) !important;
+          box-shadow: 0 25px 50px -12px rgba(6, 182, 212, 0.4) !important; }
+        .nav-link:hover { background: rgba(255, 255, 255, 0.1) !important; color: #ffffff !important; }
+        .logout-btn:hover { background: linear-gradient(135deg, #ef4444, #dc2626) !important; transform: scale(1.05) !important; }
+        .meta-card:hover { transform: translateY(-4px) !important; box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.2) !important; }
+        .stat-card:hover { transform: scale(1.05) !important; box-shadow: 0 25px 50px -12px rgba(251, 191, 36, 0.4) !important; }
+        .comments-list::-webkit-scrollbar { width: 8px; }
+        .comments-list::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.1); border-radius: 4px; }
+        .comments-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.3); border-radius: 4px; }
+        .comments-list::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.5); }
+        @media (max-width: 768px) {
+          .title { font-size: 2rem !important; }
+          .meta-grid { grid-template-columns: 1fr !important; }
+          .stats-grid { grid-template-columns: repeat(2, 1fr) !important; }
+          .rating-controls { flex-direction: column !important; align-items: stretch !important; }
+          .navbar { flex-direction: column; gap: 16px; padding: 16px; }
+          .nav-left, .nav-right { flex-wrap: wrap; justify-content: center; }
+          .content { padding: 16px !important; }
+        }
+      `}</style>
 
       <div style={styles.mouseGradient} />
       
@@ -613,43 +395,33 @@ function VideoPlayer() {
 
             {/* Video Player Container */}
             <div style={styles.videoContainer}>
-              <video controls style={styles.videoPlayer}>
-                <source src={`http://localhost:5000${video.videoUrl}`} type="video/mp4" />
-                Your browser does not support the video tag.
-              </video>
+              {loadingSrc ? (
+                <div style={{ padding: 24, color: '#d1d5db' }}>Loading video…</div>
+              ) : srcError ? (
+                <div style={{ padding: 24, color: 'salmon' }}>{srcError}</div>
+              ) : (
+                <video controls style={styles.videoPlayer} src={playerSrc}>
+                  Your browser does not support the video tag.
+                </video>
+              )}
 
               <div style={styles.videoMeta}>
                 {/* Video Metadata Grid */}
                 <div style={styles.metaGrid}>
                   <div style={styles.metaCard} className="meta-card">
-                    <div style={styles.metaTitle}>
-                      <span>🎬</span>
-                      Publisher
-                    </div>
+                    <div style={styles.metaTitle}><span>🎬</span>Publisher</div>
                     <div style={styles.metaValue}>{video.publisher || 'N/A'}</div>
                   </div>
-                  
                   <div style={styles.metaCard} className="meta-card">
-                    <div style={styles.metaTitle}>
-                      <span>🎞️</span>
-                      Producer
-                    </div>
+                    <div style={styles.metaTitle}><span>🎞️</span>Producer</div>
                     <div style={styles.metaValue}>{video.producer || 'N/A'}</div>
                   </div>
-                  
                   <div style={styles.metaCard} className="meta-card">
-                    <div style={styles.metaTitle}>
-                      <span>📁</span>
-                      Genre
-                    </div>
+                    <div style={styles.metaTitle}><span>📁</span>Genre</div>
                     <div style={styles.metaValue}>{video.genre || 'N/A'}</div>
                   </div>
-                  
                   <div style={styles.metaCard} className="meta-card">
-                    <div style={styles.metaTitle}>
-                      <span>🔞</span>
-                      Age Rating
-                    </div>
+                    <div style={styles.metaTitle}><span>🔞</span>Age Rating</div>
                     <div style={styles.metaValue}>{video.ageRating || 'N/A'}</div>
                   </div>
                 </div>
@@ -660,17 +432,14 @@ function VideoPlayer() {
                     <div style={styles.statNumber}>👁️ {video.views || 0}</div>
                     <div style={styles.statLabel}>Views</div>
                   </div>
-                  
                   <div style={styles.statCard} className="stat-card">
                     <div style={styles.statNumber}>⭐ {calculateAverageRating()}</div>
                     <div style={styles.statLabel}>Rating</div>
                   </div>
-                  
                   <div style={styles.statCard} className="stat-card">
                     <div style={styles.statNumber}>💬 {video.comments?.length || 0}</div>
                     <div style={styles.statLabel}>Comments</div>
                   </div>
-                  
                   <div style={styles.statCard} className="stat-card">
                     <div style={styles.statNumber}>🌟 {video.ratings?.length || 0}</div>
                     <div style={styles.statLabel}>Ratings</div>
@@ -681,17 +450,14 @@ function VideoPlayer() {
 
             {/* Interaction Section */}
             <div style={styles.interactionSection}>
-              <h3 style={styles.interactionTitle}>
-                <span>🎯</span>
-                Rate & Comment
-              </h3>
+              <h3 style={styles.interactionTitle}><span>🎯</span>Rate & Comment</h3>
 
               {/* Rating Section */}
               <div style={styles.ratingSection}>
                 <label style={styles.sectionLabel}>Rate this video</label>
                 <div style={styles.ratingControls}>
-                  <select 
-                    value={rating} 
+                  <select
+                    value={rating}
                     onChange={(e) => setRating(Number(e.target.value))}
                     style={styles.ratingSelect}
                     className="rating-select"
@@ -701,11 +467,7 @@ function VideoPlayer() {
                       <option key={s} value={s}>⭐ {s}</option>
                     ))}
                   </select>
-                  <button 
-                    onClick={handleRating} 
-                    style={styles.primaryButton}
-                    className="primary-button"
-                  >
+                  <button onClick={handleRating} style={styles.primaryButton} className="primary-button">
                     Submit Rating
                   </button>
                 </div>
@@ -722,11 +484,7 @@ function VideoPlayer() {
                   style={styles.commentInput}
                   className="comment-input"
                 />
-                <button 
-                  onClick={handleComment} 
-                  style={styles.secondaryButton}
-                  className="secondary-button"
-                >
+                <button onClick={handleComment} style={styles.secondaryButton} className="secondary-button">
                   Post Comment
                 </button>
               </div>
@@ -734,11 +492,7 @@ function VideoPlayer() {
 
             {/* Comments Display */}
             <div style={styles.commentsDisplay}>
-              <h3 style={styles.commentsTitle}>
-                <span>💬</span>
-                Comments ({video.comments?.length || 0})
-              </h3>
-              
+              <h3 style={styles.commentsTitle}><span>💬</span>Comments ({video.comments?.length || 0})</h3>
               <div style={styles.commentsList} className="comments-list">
                 {video.comments?.length === 0 ? (
                   <div style={styles.noComments}>
