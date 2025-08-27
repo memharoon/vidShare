@@ -1,0 +1,44 @@
+.page-container {
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.search-filters input {
+  margin-right: 10px;
+  margin-bottom: 15px;
+  padding: 8px;
+  width: 200px;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 20px;
+}
+
+.video-card {
+  background: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  padding: 15px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.watch-button {
+  display: inline-block;
+  margin-top: 10px;
+  color: white;
+  background-color: #007bff;
+  padding: 8px 12px;
+  text-decoration: none;
+  border-radius: 5px;
+}
+
+.watch-button:hover {
+  background-color: #0056b3;
+}
+
+.error-text {
+  color: red;
+  margin-bottom: 10px;
+}
