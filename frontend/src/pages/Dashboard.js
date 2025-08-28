@@ -29,26 +29,60 @@ function Dashboard() {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // helper to make a playable URL for each video
+  // helper to make a playable URL + thumbnail URL for each video
   const API_BASE = api.defaults.baseURL.replace(/\/+$/, '');
+
+  const PLACEHOLDER_POSTER =
+    'data:image/svg+xml;utf8,' +
+    encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1f2937" offset="0"/><stop stop-color="#4c1d95" offset="1"/></linearGradient></defs><rect width="640" height="360" fill="url(#g)"/><g fill="#c4b5fd" opacity="0.85"><path d="M260 120l140 60-140 60z"/></g></svg>`
+    );
+
+  const filenameNoExt = (name = '') => {
+    const i = name.lastIndexOf('.');
+    return i > -1 ? name.slice(0, i) : name;
+  };
 
   async function toPlayable(video) {
     const raw = video.videoUrl || video.url || video.blobName;
-    if (!raw) return { ...video };
+    let playUrl = null;
 
-    // already absolute (e.g., Azure Blob SAS or CDN)
-    if (/^https?:\/\//i.test(raw)) return { ...video, playUrl: raw };
-
-    // served by our backend (e.g., "/uploads/...")
-    if (raw.startsWith('/')) return { ...video, playUrl: `${API_BASE}${raw}` };
-
-    // otherwise treat as blobName and fetch a read-only SAS
-    try {
-      const { sasUrl } = await getSasUrl(raw, 3600);
-      return { ...video, playUrl: sasUrl };
-    } catch {
-      return { ...video, playUrl: null };
+    if (raw) {
+      // already absolute (e.g., Azure Blob SAS or CDN)
+      if (/^https?:\/\//i.test(raw)) {
+        playUrl = raw;
+      } else if (raw.startsWith('/')) {
+        // served by our backend (e.g., "/uploads/...")
+        playUrl = `${API_BASE}${raw}`;
+      } else {
+        // otherwise treat as blobName and fetch a read-only SAS
+        try {
+          const { sasUrl } = await getSasUrl(raw, 3600);
+          playUrl = sasUrl;
+        } catch {
+          playUrl = null;
+        }
+      }
     }
+
+    // Resolve thumbnail URL (prefer server-provided, else derive)
+    let thumbUrl = video.thumbnailUrl || null;
+    if (!thumbUrl) {
+      const thumbBlobName =
+        video.thumbBlobName ||
+        (video.blobName ? `${filenameNoExt(video.blobName)}-thumb.jpg` : null);
+
+      if (thumbBlobName) {
+        try {
+          const { sasUrl: thumbSas } = await getSasUrl(thumbBlobName, 3600);
+          thumbUrl = thumbSas;
+        } catch {
+          thumbUrl = null;
+        }
+      }
+    }
+
+    return { ...video, playUrl, thumbUrl };
   }
 
   // load videos from backend (uses API base, not localhost)
@@ -507,6 +541,30 @@ function Dashboard() {
     emptyDescription: { color: '#9ca3af', fontSize: '1.1rem' }
   };
 
+  function HoverPlayVideo({ src, poster }) {
+    return (
+      <video
+        style={styles.videoPlayer}
+        muted
+        playsInline
+        preload="metadata"
+        poster={poster || PLACEHOLDER_POSTER}
+        onMouseEnter={(e) => {
+          if (src) e.currentTarget.play().catch(() => {});
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.pause();
+          try {
+            e.currentTarget.currentTime = 0;
+          } catch {}
+        }}
+      >
+        {src ? <source src={src} type="video/mp4" /> : null}
+        Your browser does not support the video tag.
+      </video>
+    );
+  }
+
   return (
     <div style={styles.container}>
       <style>
@@ -687,14 +745,12 @@ function Dashboard() {
             <div style={styles.videosGrid} className="videos-grid">
               {filteredVideos.map((video) => (
                 <div className="video-card" style={styles.videoCard} key={video._id}>
-                  {/* Video Player */}
+                  {/* Video Player with thumbnail + hover autoplay */}
                   <div style={styles.videoContainer}>
-                    <video controls style={styles.videoPlayer}>
-                      {video.playUrl ? (
-                        <source src={video.playUrl} type="video/mp4" />
-                      ) : null}
-                      Your browser does not support the video tag.
-                    </video>
+                    <HoverPlayVideo
+                      src={video.playUrl || null}
+                      poster={video.thumbUrl || PLACEHOLDER_POSTER}
+                    />
                   </div>
 
                   {/* Video Details */}
