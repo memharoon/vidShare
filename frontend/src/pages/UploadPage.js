@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
+import { api, setAuthToken } from '../api'; // <-- use shared API base + auth
 
 function UploadPage() {
   const [videoFile, setVideoFile] = useState(null);
@@ -22,14 +23,12 @@ function UploadPage() {
 
   useEffect(() => {
     setIsVisible(true);
-    
     const handleMouseMove = (e) => {
       setMousePosition({
         x: (e.clientX / window.innerWidth) * 100,
         y: (e.clientY / window.innerHeight) * 100,
       });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
@@ -58,7 +57,6 @@ function UploadPage() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const file = e.dataTransfer.files[0];
       if (file.type.startsWith('video/')) {
@@ -71,9 +69,7 @@ function UploadPage() {
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setVideoFile(file);
-    }
+    if (file) setVideoFile(file);
   };
 
   const formatFileSize = (bytes) => {
@@ -84,8 +80,9 @@ function UploadPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
+  // ---- UPDATED: direct-to-Blob upload via SAS, then save metadata ----
   const handleUpload = async () => {
-    if (!videoFile || !formData.title) {
+    if (!videoFile || !formData.title.trim()) {
       setMessage('❗ Please provide a title and select a video.');
       return;
     }
@@ -96,52 +93,77 @@ function UploadPage() {
       return;
     }
 
-    const payload = new FormData();
-    payload.append('video', videoFile);
-    Object.entries(formData).forEach(([key, value]) => payload.append(key, value));
-
     try {
       setUploading(true);
       setUploadProgress(0);
-      
-      // Simulate progress for demo (replace with actual progress tracking)
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => {
-          if (prev >= 90) {
-            clearInterval(progressInterval);
-            return 90;
-          }
-          return prev + Math.random() * 15;
-        });
-      }, 500);
+      setMessage('');
 
-      const response = await axios.post('http://localhost:5000/api/videos', payload, {
+      // Unique blob name (kept under the fixed 'videos' container on the backend)
+      const uid = (crypto?.randomUUID?.() || Date.now());
+      const safeName = videoFile.name.replace(/\s+/g, '-');
+      const blobName = `${uid}-${safeName}`;
+
+      // 1) Ask backend for a SAS with create+write perms
+      //    GET /api/media/sas?blobName=<...>&ttl=3600&perm=cw
+      const { data: sasResp } = await api.get('/api/media/sas', {
+        params: { blobName, ttl: 3600, perm: 'cw' },
+      });
+      const sasUrl = sasResp.sasUrl;
+
+      // 2) PUT the file to Azure Blob Storage (track progress)
+      await axios.put(sasUrl, videoFile, {
         headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'multipart/form-data',
+          'x-ms-blob-type': 'BlockBlob',
+          'x-ms-blob-content-type': videoFile.type || 'application/octet-stream',
+        },
+        onUploadProgress: (evt) => {
+          if (evt.total) {
+            const pct = Math.min(99, (evt.loaded / evt.total) * 100);
+            setUploadProgress(pct);
+          }
         },
       });
-      
-      clearInterval(progressInterval);
+
       setUploadProgress(100);
+
+      // 3) Save metadata in Mongo via backend
+      setAuthToken(token); // sets Authorization header on our shared axios instance
+      await api.post('/api/videos', {
+        title: formData.title,
+        genre: formData.genre,
+        ageRating: formData.ageRating,
+        publisher: formData.publisher,
+        producer: formData.producer,
+
+        // Store blobName; Dashboard will request a read SAS to play it
+        blobName,
+
+        // Back-compat if your backend used `videoUrl` earlier
+        videoUrl: blobName,
+
+        storage: 'azure',
+        originalName: videoFile.name,
+        mimeType: videoFile.type,
+        size: videoFile.size,
+      });
+
       setMessage('✅ Video uploaded successfully!');
-      
       setTimeout(() => {
         setFormData({ title: '', publisher: '', producer: '', genre: '', ageRating: '' });
         setVideoFile(null);
         setUploadProgress(0);
         navigate('/creator-dashboard');
-      }, 2000);
-      
+      }, 1200);
     } catch (error) {
       console.error('Upload failed:', error);
-      setMessage('❌ Failed to upload video.');
+      setMessage(`❌ ${error?.response?.data?.error || error.message || 'Failed to upload video.'}`);
       setUploadProgress(0);
     } finally {
       setUploading(false);
     }
   };
 
+  // ----------------- styles & layout unchanged below -----------------
   const styles = {
     container: {
       minHeight: '100vh',
@@ -159,7 +181,6 @@ function UploadPage() {
       opacity: 0.3,
       background: `radial-gradient(circle at ${mousePosition.x}% ${mousePosition.y}%, rgba(147, 51, 234, 0.3) 0%, transparent 50%)`
     },
-    // Header/Navbar styles
     navbar: {
       position: 'relative',
       zIndex: 20,
@@ -171,17 +192,8 @@ function UploadPage() {
       backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
     },
-    navLeft: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '24px'
-    },
-    navBrand: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      textDecoration: 'none'
-    },
+    navLeft: { display: 'flex', alignItems: 'center', gap: '24px' },
+    navBrand: { display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' },
     navBrandIcon: {
       padding: '8px',
       background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
@@ -198,11 +210,7 @@ function UploadPage() {
       WebkitTextFillColor: 'transparent',
       backgroundClip: 'text',
     },
-    navRight: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px'
-    },
+    navRight: { display: 'flex', alignItems: 'center', gap: '16px' },
     navLink: {
       color: '#d1d5db',
       textDecoration: 'none',
@@ -224,7 +232,6 @@ function UploadPage() {
       cursor: 'pointer',
       transition: 'all 0.3s ease',
     },
-    // Content styles
     content: {
       position: 'relative',
       zIndex: 10,
@@ -252,12 +259,7 @@ function UploadPage() {
       justifyContent: 'center',
       gap: '12px'
     },
-    subtitle: {
-      color: '#d1d5db',
-      fontSize: '1.1rem',
-      marginBottom: '32px'
-    },
-    // Upload form container
+    subtitle: { color: '#d1d5db', fontSize: '1.1rem', marginBottom: '32px' },
     uploadContainer: {
       opacity: isVisible ? 1 : 0,
       transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
@@ -269,7 +271,6 @@ function UploadPage() {
       padding: '40px',
       boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
     },
-    // File upload area
     uploadArea: {
       border: dragActive ? '2px dashed #a855f7' : '2px dashed rgba(255, 255, 255, 0.3)',
       borderRadius: '16px',
@@ -282,25 +283,10 @@ function UploadPage() {
       position: 'relative',
       overflow: 'hidden'
     },
-    uploadIcon: {
-      fontSize: '3rem',
-      marginBottom: '16px',
-      color: dragActive ? '#a855f7' : '#9ca3af'
-    },
-    uploadText: {
-      color: '#d1d5db',
-      fontSize: '1.1rem',
-      fontWeight: '600',
-      marginBottom: '8px'
-    },
-    uploadSubtext: {
-      color: '#9ca3af',
-      fontSize: '0.9rem',
-      marginBottom: '16px'
-    },
-    fileInput: {
-      display: 'none'
-    },
+    uploadIcon: { fontSize: '3rem', marginBottom: '16px', color: dragActive ? '#a855f7' : '#9ca3af' },
+    uploadText: { color: '#d1d5db', fontSize: '1.1rem', fontWeight: '600', marginBottom: '8px' },
+    uploadSubtext: { color: '#9ca3af', fontSize: '0.9rem', marginBottom: '16px' },
+    fileInput: { display: 'none' },
     browseButton: {
       padding: '12px 24px',
       background: 'linear-gradient(135deg, #9333ea, #ec4899)',
@@ -312,7 +298,6 @@ function UploadPage() {
       transition: 'all 0.3s ease',
       fontSize: '14px'
     },
-    // File info
     fileInfo: {
       display: 'flex',
       alignItems: 'center',
@@ -324,19 +309,9 @@ function UploadPage() {
       marginBottom: '24px',
       color: '#22c55e'
     },
-    fileDetails: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px'
-    },
-    fileName: {
-      fontWeight: '600',
-      fontSize: '1rem'
-    },
-    fileSize: {
-      fontSize: '0.9rem',
-      opacity: 0.8
-    },
+    fileDetails: { display: 'flex', alignItems: 'center', gap: '12px' },
+    fileName: { fontWeight: '600', fontSize: '1rem' },
+    fileSize: { fontSize: '0.9rem', opacity: 0.8 },
     removeButton: {
       background: 'rgba(239, 68, 68, 0.2)',
       color: '#ef4444',
@@ -348,16 +323,13 @@ function UploadPage() {
       fontWeight: '600',
       transition: 'all 0.3s ease'
     },
-    // Form inputs
     formGrid: {
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
       gap: '20px',
       marginBottom: '32px'
     },
-    inputGroup: {
-      position: 'relative'
-    },
+    inputGroup: { position: 'relative' },
     inputLabel: {
       color: '#d1d5db',
       fontSize: '14px',
@@ -378,31 +350,19 @@ function UploadPage() {
       backdropFilter: 'blur(10px)',
       boxSizing: 'border-box'
     },
-    requiredField: {
-      color: '#ef4444',
-      fontSize: '12px',
-      marginTop: '4px'
-    },
-    // Message styles
+    requiredField: { color: '#ef4444', fontSize: '12px', marginTop: '4px' },
     message: {
       padding: '12px 16px',
       borderRadius: '8px',
       textAlign: 'center',
       fontSize: '14px',
       fontWeight: '500',
-      background: message.includes('✅') 
-        ? 'rgba(34, 197, 94, 0.1)' 
-        : 'rgba(239, 68, 68, 0.1)',
-      border: message.includes('✅') 
-        ? '1px solid rgba(34, 197, 94, 0.3)' 
-        : '1px solid rgba(239, 68, 68, 0.3)',
+      background: message.includes('✅') ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+      border: message.includes('✅') ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
       color: message.includes('✅') ? '#22c55e' : '#ef4444',
       marginBottom: '20px'
     },
-    // Upload button and progress
-    uploadButtonContainer: {
-      textAlign: 'center'
-    },
+    uploadButtonContainer: { textAlign: 'center' },
     uploadButton: {
       padding: '16px 32px',
       background: uploading ? 'rgba(147, 51, 234, 0.6)' : 'linear-gradient(135deg, #10b981, #059669)',
@@ -420,11 +380,7 @@ function UploadPage() {
       minWidth: '200px',
       justifyContent: 'center'
     },
-    // Progress bar
-    progressContainer: {
-      marginTop: '20px',
-      display: uploading ? 'block' : 'none'
-    },
+    progressContainer: { marginTop: '20px', display: uploading ? 'block' : 'none' },
     progressBar: {
       width: '100%',
       height: '8px',
@@ -440,11 +396,7 @@ function UploadPage() {
       transition: 'width 0.3s ease',
       borderRadius: '4px'
     },
-    progressText: {
-      color: '#d1d5db',
-      fontSize: '14px',
-      textAlign: 'center'
-    },
+    progressText: { color: '#d1d5db', fontSize: '14px', textAlign: 'center' },
     loadingSpinner: {
       width: '20px',
       height: '20px',
@@ -459,37 +411,21 @@ function UploadPage() {
     <div style={styles.container}>
       <style>
         {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
+          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
           .input:focus {
             border-color: rgba(147, 51, 234, 0.6) !important;
             box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.1) !important;
           }
-          .input::placeholder {
-            color: rgba(255, 255, 255, 0.6);
-          }
+          .input::placeholder { color: rgba(255, 255, 255, 0.6); }
           .upload-button:hover:not(:disabled) {
             background: linear-gradient(135deg, #059669, #047857) !important;
             transform: translateY(-2px) !important;
             box-shadow: 0 12px 40px rgba(16, 185, 129, 0.4) !important;
           }
-          .browse-button:hover {
-            background: linear-gradient(135deg, #7c3aed, #db2777) !important;
-            transform: translateY(-2px) !important;
-          }
-          .remove-button:hover {
-            background: rgba(239, 68, 68, 0.3) !important;
-          }
-          .nav-link:hover {
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: #ffffff !important;
-          }
-          .logout-btn:hover {
-            background: linear-gradient(135deg, #ef4444, #dc2626) !important;
-            transform: scale(1.05) !important;
-          }
+          .browse-button:hover { background: linear-gradient(135deg, #7c3aed, #db2777) !important; transform: translateY(-2px) !important; }
+          .remove-button:hover { background: rgba(239, 68, 68, 0.3) !important; }
+          .nav-link:hover { background: rgba(255, 255, 255, 0.1) !important; color: #ffffff !important; }
+          .logout-btn:hover { background: linear-gradient(135deg, #ef4444, #dc2626) !important; transform: scale(1.05) !important; }
           @media (max-width: 768px) {
             .navbar { flex-direction: column; gap: 16px; padding: 16px; }
             .nav-left, .nav-right { flex-wrap: wrap; justify-content: center; }
@@ -501,7 +437,7 @@ function UploadPage() {
       </style>
 
       <div style={styles.mouseGradient} />
-      
+
       {/* Navigation Header */}
       <nav style={styles.navbar}>
         <div style={styles.navLeft}>
@@ -516,21 +452,9 @@ function UploadPage() {
         </div>
 
         <div style={styles.navRight}>
-          <Link to="/dashboard" style={styles.navLink} className="nav-link">
-            <span>📺</span>
-            <span>Dashboard</span>
-          </Link>
-          
-          <Link to="/creator-dashboard" style={styles.navLink} className="nav-link">
-            <span>📁</span>
-            <span>My Videos</span>
-          </Link>
-
-          <Link to="/stats" style={styles.navLink} className="nav-link">
-            <span>📈</span>
-            <span>Stats</span>
-          </Link>
-
+          <Link to="/dashboard" style={styles.navLink} className="nav-link"><span>📺</span><span>Dashboard</span></Link>
+          <Link to="/creator-dashboard" style={styles.navLink} className="nav-link"><span>📁</span><span>My Videos</span></Link>
+          <Link to="/stats" style={styles.navLink} className="nav-link"><span>📈</span><span>Stats</span></Link>
           <button
             onClick={() => window.confirm('Are you sure you want to logout?') && handleLogout()}
             style={styles.logoutBtn}
@@ -540,24 +464,19 @@ function UploadPage() {
           </button>
         </div>
       </nav>
-      
+
       {/* Main Content */}
       <div style={styles.content}>
         <div style={styles.header}>
-          <h1 style={styles.title}>
-            <span>🎬</span>
-            <span>Upload New Video</span>
-          </h1>
-          <p style={styles.subtitle}>
-            Share your content with the world
-          </p>
+          <h1 style={styles.title}><span>🎬</span><span>Upload New Video</span></h1>
+          <p style={styles.subtitle}>Share your content with the world</p>
         </div>
 
-        <div style={styles.uploadContainer}>
+        <div style={styles.uploadContainer} className="upload-container">
           {message && <div style={styles.message}>{message}</div>}
-          
+
           {/* File Upload Area */}
-          <div 
+          <div
             style={styles.uploadArea}
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -565,25 +484,11 @@ function UploadPage() {
             onDrop={handleDrop}
             onClick={() => document.getElementById('video-upload').click()}
           >
-            <div style={styles.uploadIcon}>
-              {dragActive ? '📁' : '🎥'}
-            </div>
-            <div style={styles.uploadText}>
-              {dragActive ? 'Drop your video here' : 'Upload Video File'}
-            </div>
-            <div style={styles.uploadSubtext}>
-              Drag and drop or click to browse (MP4, AVI, MOV)
-            </div>
-            <input
-              id="video-upload"
-              type="file"
-              accept="video/*"
-              onChange={handleFileSelect}
-              style={styles.fileInput}
-            />
-            <button style={styles.browseButton} className="browse-button">
-              Choose File
-            </button>
+            <div style={styles.uploadIcon}>{dragActive ? '📁' : '🎥'}</div>
+            <div style={styles.uploadText}>{dragActive ? 'Drop your video here' : 'Upload Video File'}</div>
+            <div style={styles.uploadSubtext}>Drag and drop or click to browse (MP4, AVI, MOV)</div>
+            <input id="video-upload" type="file" accept="video/*" onChange={handleFileSelect} style={styles.fileInput} />
+            <button style={styles.browseButton} className="browse-button">Choose File</button>
           </div>
 
           {/* Selected File Info */}
@@ -601,13 +506,10 @@ function UploadPage() {
                   <div style={styles.fileSize}>{formatFileSize(videoFile.size)}</div>
                 </div>
               </div>
-              <button 
-                style={styles.removeButton} 
+              <button
+                style={styles.removeButton}
                 className="remove-button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setVideoFile(null);
-                }}
+                onClick={(e) => { e.stopPropagation(); setVideoFile(null); }}
               >
                 Remove
               </button>
@@ -715,10 +617,7 @@ function UploadPage() {
               <div style={styles.progressFill}></div>
             </div>
             <div style={styles.progressText}>
-              {uploadProgress < 100 
-                ? `Uploading... ${Math.round(uploadProgress)}%` 
-                : 'Upload Complete!'
-              }
+              {uploadProgress < 100 ? `Uploading... ${Math.round(uploadProgress)}%` : 'Upload Complete!'}
             </div>
           </div>
         </div>
