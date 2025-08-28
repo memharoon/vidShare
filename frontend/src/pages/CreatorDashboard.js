@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import { api } from '../api';
 import { Link, useNavigate } from 'react-router-dom';
 
 function CreatorDashboard() {
@@ -30,7 +30,7 @@ function CreatorDashboard() {
   useEffect(() => {
     const token = localStorage.getItem('token');
     setIsLoading(true);
-    axios.get('http://localhost:5000/api/videos', {
+    api.get('/api/videos', {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -570,7 +570,7 @@ function CreatorDashboard() {
                 {filteredVideos.map((video) => (
                   <div style={styles.videoCard} key={video._id} className="video-card">
                     <video style={styles.videoElement} controls>
-                      <source src={`http://localhost:5000${video.videoUrl}`} type="video/mp4" />
+                      <source src={video.playbackUrl || video.videoUrl} type="video/mp4" />
                       Your browser does not support the video tag.
                     </video>
                     
