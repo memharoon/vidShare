@@ -14,7 +14,7 @@ import Stats from './pages/Stats';
 import ForgotPassword from './pages/ForgotPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 
-import { setAuthToken } from './api'; // <-- NEW: wire axios default auth header
+import { setAuthToken } from './api'; // wire axios default auth header
 
 function AppWrapper() {
   return (
@@ -27,7 +27,7 @@ function AppWrapper() {
 function App() {
   const navigate = useNavigate();
 
-  // Ensure Axios has the JWT on app load and when the token changes (e.g., login/logout)
+  // Ensure Axios has the JWT on app load and when the token changes
   useEffect(() => {
     setAuthToken(localStorage.getItem('token') || null);
 
