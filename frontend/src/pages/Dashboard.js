@@ -1,7 +1,7 @@
 // src/pages/Dashboard.js
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
 import { Link, useNavigate } from 'react-router-dom';
+import { api, setAuthToken, getSasUrl } from '../api';
 
 function Dashboard() {
   const [videos, setVideos] = useState([]);
@@ -16,32 +16,65 @@ function Dashboard() {
   const role = localStorage.getItem('role');
   const navigate = useNavigate();
 
+  // smooth entrance + background mouse parallax
   useEffect(() => {
     setIsVisible(true);
-    
     const handleMouseMove = (e) => {
       setMousePosition({
         x: (e.clientX / window.innerWidth) * 100,
         y: (e.clientY / window.innerHeight) * 100,
       });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
+  // helper to make a playable URL for each video
+  const API_BASE = api.defaults.baseURL.replace(/\/+$/, '');
+
+  async function toPlayable(video) {
+    const raw = video.videoUrl || video.url || video.blobName;
+    if (!raw) return { ...video };
+
+    // already absolute (e.g., Azure Blob SAS or CDN)
+    if (/^https?:\/\//i.test(raw)) return { ...video, playUrl: raw };
+
+    // served by our backend (e.g., "/uploads/...")
+    if (raw.startsWith('/')) return { ...video, playUrl: `${API_BASE}${raw}` };
+
+    // otherwise treat as blobName and fetch a read-only SAS
+    try {
+      const { sasUrl } = await getSasUrl(raw, 3600);
+      return { ...video, playUrl: sasUrl };
+    } catch {
+      return { ...video, playUrl: null };
+    }
+  }
+
+  // load videos from backend (uses API base, not localhost)
   useEffect(() => {
-    axios.get('http://localhost:5000/api/videos')
-      .then((res) => setVideos(res.data.reverse()))
-      .catch((err) => {
+    const token = localStorage.getItem('token');
+    setAuthToken(token || null);
+
+    (async () => {
+      try {
+        const res = await api.get('/api/videos');
+        const list = Array.isArray(res.data) ? res.data : [];
+        const resolved = await Promise.all(list.map(toPlayable));
+        setVideos(resolved.reverse());
+        setError('');
+      } catch (err) {
         console.error('Error fetching videos:', err);
         setError('❌ Failed to load videos.');
-      });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    setAuthToken(null);
     navigate('/login');
   };
 
@@ -56,7 +89,7 @@ function Dashboard() {
     }
 
     try {
-      await axios.post(`http://localhost:5000/api/videos/${videoId}/comment`, { user, text });
+      await api.post(`/api/videos/${videoId}/comment`, { user, text });
       setVideos((prev) =>
         prev.map((v) =>
           v._id === videoId
@@ -82,7 +115,7 @@ function Dashboard() {
     }
 
     try {
-      await axios.post(`http://localhost:5000/api/videos/${videoId}/rate`, { user, score });
+      await api.post(`/api/videos/${videoId}/rate`, { user, score });
       setVideos((prev) =>
         prev.map((v) =>
           v._id === videoId
@@ -104,9 +137,9 @@ function Dashboard() {
   };
 
   const filteredVideos = videos.filter((video) =>
-    video.title?.toLowerCase().includes(searchTitle.toLowerCase()) &&
-    video.genre?.toLowerCase().includes(searchGenre.toLowerCase()) &&
-    video.ageRating?.toString().includes(searchAgeRating)
+    (video.title || '').toLowerCase().includes(searchTitle.toLowerCase()) &&
+    (video.genre || '').toLowerCase().includes(searchGenre.toLowerCase()) &&
+    (String(video.ageRating || '')).includes(searchAgeRating)
   );
 
   const styles = {
@@ -137,17 +170,8 @@ function Dashboard() {
       backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
     },
-    navLeft: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '24px'
-    },
-    navBrand: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      textDecoration: 'none'
-    },
+    navLeft: { display: 'flex', alignItems: 'center', gap: '24px' },
+    navBrand: { display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' },
     navBrandIcon: {
       padding: '8px',
       background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
@@ -164,11 +188,7 @@ function Dashboard() {
       WebkitTextFillColor: 'transparent',
       backgroundClip: 'text',
     },
-    navRight: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px'
-    },
+    navRight: { display: 'flex', alignItems: 'center', gap: '16px' },
     navLink: {
       color: '#d1d5db',
       textDecoration: 'none',
@@ -244,16 +264,8 @@ function Dashboard() {
       gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
       gap: '24px'
     },
-    searchField: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '8px'
-    },
-    searchLabel: {
-      color: '#d1d5db',
-      fontWeight: '500',
-      fontSize: '0.9rem'
-    },
+    searchField: { display: 'flex', flexDirection: 'column', gap: '8px' },
+    searchLabel: { color: '#d1d5db', fontWeight: '500', fontSize: '0.9rem' },
     searchInput: {
       padding: '12px 16px',
       background: 'rgba(255, 255, 255, 0.1)',
@@ -310,9 +322,7 @@ function Dashboard() {
       border: 'none',
       borderRadius: '20px 20px 0 0'
     },
-    videoDetails: {
-      padding: '24px'
-    },
+    videoDetails: { padding: '24px' },
     videoTitle: {
       fontSize: '1.5rem',
       fontWeight: '700',
@@ -336,18 +346,9 @@ function Dashboard() {
       borderRadius: '10px',
       fontSize: '0.9rem'
     },
-    metaIcon: {
-      fontSize: '1.1rem'
-    },
-    metaLabel: {
-      fontWeight: '600',
-      color: '#d1d5db',
-      minWidth: '60px'
-    },
-    metaValue: {
-      color: 'white',
-      fontWeight: '500'
-    },
+    metaIcon: { fontSize: '1.1rem' },
+    metaLabel: { fontWeight: '600', color: '#d1d5db', minWidth: '60px' },
+    metaValue: { color: 'white', fontWeight: '500' },
     ratingDisplay: {
       display: 'flex',
       alignItems: 'center',
@@ -388,11 +389,7 @@ function Dashboard() {
       fontSize: '1rem',
       transition: 'all 0.3s ease'
     },
-    commentControls: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '12px'
-    },
+    commentControls: { display: 'flex', flexDirection: 'column', gap: '12px' },
     commentInput: {
       padding: '12px 16px',
       background: 'rgba(255, 255, 255, 0.1)',
@@ -441,11 +438,7 @@ function Dashboard() {
       marginBottom: '16px',
       fontWeight: '600'
     },
-    commentsList: {
-      maxHeight: '300px',
-      overflowY: 'auto',
-      padding: '4px'
-    },
+    commentsList: { maxHeight: '300px', overflowY: 'auto', padding: '4px' },
     commentItem: {
       display: 'flex',
       gap: '12px',
@@ -463,22 +456,14 @@ function Dashboard() {
       fontSize: '1rem',
       flexShrink: 0
     },
-    commentContent: {
-      flex: 1,
-      minWidth: 0
-    },
+    commentContent: { flex: 1, minWidth: 0 },
     commentAuthor: {
       fontWeight: '600',
       color: '#c4b5fd',
       fontSize: '0.9rem',
       marginBottom: '4px'
     },
-    commentText: {
-      color: '#d1d5db',
-      fontSize: '0.95rem',
-      lineHeight: 1.5,
-      wordWrap: 'break-word'
-    },
+    commentText: { color: '#d1d5db', fontSize: '0.95rem', lineHeight: 1.5, wordWrap: 'break-word' },
     noComments: {
       display: 'flex',
       alignItems: 'center',
@@ -489,10 +474,7 @@ function Dashboard() {
       textAlign: 'center',
       justifyContent: 'center'
     },
-    videoActions: {
-      borderTop: '1px solid rgba(255, 255, 255, 0.1)',
-      paddingTop: '24px'
-    },
+    videoActions: { borderTop: '1px solid rgba(255, 255, 255, 0.1)', paddingTop: '24px' },
     featuredButton: {
       padding: '16px 32px',
       background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
@@ -520,21 +502,9 @@ function Dashboard() {
       textAlign: 'center',
       boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)'
     },
-    emptyIcon: {
-      fontSize: '4rem',
-      marginBottom: '16px',
-      opacity: 0.6
-    },
-    emptyTitle: {
-      color: 'white',
-      marginBottom: '8px',
-      fontSize: '1.5rem',
-      fontWeight: '600'
-    },
-    emptyDescription: {
-      color: '#9ca3af',
-      fontSize: '1.1rem'
-    }
+    emptyIcon: { fontSize: '4rem', marginBottom: '16px', opacity: 0.6 },
+    emptyTitle: { color: 'white', marginBottom: '8px', fontSize: '1.5rem', fontWeight: '600' },
+    emptyDescription: { color: '#9ca3af', fontSize: '1.1rem' }
   };
 
   return (
@@ -548,60 +518,43 @@ function Dashboard() {
             border-color: rgba(147, 51, 234, 0.6) !important;
             box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.2) !important;
           }
-          
-          .search-input::placeholder,
-          .comment-input::placeholder {
+          .search-input::placeholder, .comment-input::placeholder {
             color: rgba(255, 255, 255, 0.5);
           }
-          
           .video-card:hover {
             transform: translateY(-8px) !important;
             box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.4) !important;
           }
-          
           .primary-button:hover {
             transform: scale(1.05) !important;
             box-shadow: 0 25px 50px -12px rgba(147, 51, 234, 0.4) !important;
           }
-          
           .secondary-button:hover {
             transform: scale(1.05) !important;
             box-shadow: 0 25px 50px -12px rgba(6, 182, 212, 0.4) !important;
           }
-          
           .featured-button:hover {
             transform: scale(1.02) !important;
             box-shadow: 0 25px 50px -12px rgba(251, 191, 36, 0.4) !important;
           }
-          
           .nav-link:hover {
             background: rgba(255, 255, 255, 0.1) !important;
             color: #ffffff !important;
           }
-          
           .logout-btn:hover {
             background: linear-gradient(135deg, #ef4444, #dc2626) !important;
             transform: scale(1.05) !important;
           }
-          
-          .comments-list::-webkit-scrollbar {
-            width: 6px;
-          }
-          
+          .comments-list::-webkit-scrollbar { width: 6px; }
           .comments-list::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1); border-radius: 3px;
           }
-          
           .comments-list::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.3);
-            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.3); border-radius: 3px;
           }
-          
           .comments-list::-webkit-scrollbar-thumb:hover {
             background: rgba(255, 255, 255, 0.5);
           }
-          
           @media (max-width: 768px) {
             .title { font-size: 2.5rem !important; }
             .subtitle { font-size: 1.1rem !important; }
@@ -617,14 +570,14 @@ function Dashboard() {
       </style>
 
       <div style={styles.mouseGradient} />
-      
+
       {/* Navigation Header */}
       <nav style={styles.navbar}>
         <div style={styles.navLeft}>
           <Link to="/" style={styles.navBrand}>
             <div style={styles.navBrandIcon}>
               <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z"/>
+                <path d="M8 5v14l11-7z" />
               </svg>
             </div>
             <span style={styles.navBrandText}>VidShare</span>
@@ -663,29 +616,27 @@ function Dashboard() {
           )}
         </div>
       </nav>
-      
+
       {/* Main Content */}
       <div style={styles.content}>
         {/* Hero Section */}
         <div style={styles.hero}>
-          <h1 style={styles.title}>🔥 Video Dashboard</h1>
-          <p style={styles.subtitle}>
+          <h1 style={styles.title} className="title">🔥 Video Dashboard</h1>
+          <p style={styles.subtitle} className="subtitle">
             Discover, rate, and engage with amazing video content from creators worldwide
           </p>
         </div>
 
         {/* Search Section */}
         <div style={styles.searchSection}>
-          <h3 style={styles.searchTitle}>
-            🔍 Find Your Perfect Content
-          </h3>
-          <div style={styles.searchGrid}>
+          <h3 style={styles.searchTitle}>🔍 Find Your Perfect Content</h3>
+          <div style={styles.searchGrid} className="search-grid">
             <div style={styles.searchField}>
               <label style={styles.searchLabel}>Title</label>
-              <input 
-                type="text" 
-                placeholder="Search by title..." 
-                value={searchTitle} 
+              <input
+                type="text"
+                placeholder="Search by title..."
+                value={searchTitle}
                 onChange={(e) => setSearchTitle(e.target.value)}
                 style={styles.searchInput}
                 className="search-input"
@@ -693,10 +644,10 @@ function Dashboard() {
             </div>
             <div style={styles.searchField}>
               <label style={styles.searchLabel}>Genre</label>
-              <input 
-                type="text" 
-                placeholder="Search by genre..." 
-                value={searchGenre} 
+              <input
+                type="text"
+                placeholder="Search by genre..."
+                value={searchGenre}
                 onChange={(e) => setSearchGenre(e.target.value)}
                 style={styles.searchInput}
                 className="search-input"
@@ -704,10 +655,10 @@ function Dashboard() {
             </div>
             <div style={styles.searchField}>
               <label style={styles.searchLabel}>Age Rating</label>
-              <input 
-                type="text" 
-                placeholder="Search by age rating..." 
-                value={searchAgeRating} 
+              <input
+                type="text"
+                placeholder="Search by age rating..."
+                value={searchAgeRating}
                 onChange={(e) => setSearchAgeRating(e.target.value)}
                 style={styles.searchInput}
                 className="search-input"
@@ -733,13 +684,15 @@ function Dashboard() {
               <p style={styles.emptyDescription}>Try adjusting your search criteria to discover amazing content.</p>
             </div>
           ) : (
-            <div style={styles.videosGrid}>
+            <div style={styles.videosGrid} className="videos-grid">
               {filteredVideos.map((video) => (
                 <div className="video-card" style={styles.videoCard} key={video._id}>
                   {/* Video Player */}
                   <div style={styles.videoContainer}>
                     <video controls style={styles.videoPlayer}>
-                      <source src={`http://localhost:5000${video.videoUrl}`} type="video/mp4" />
+                      {video.playUrl ? (
+                        <source src={video.playUrl} type="video/mp4" />
+                      ) : null}
                       Your browser does not support the video tag.
                     </video>
                   </div>
@@ -747,8 +700,8 @@ function Dashboard() {
                   {/* Video Details */}
                   <div style={styles.videoDetails}>
                     <h3 style={styles.videoTitle}>{video.title}</h3>
-                    
-                    <div style={styles.metaGrid}>
+
+                    <div style={styles.metaGrid} className="meta-grid">
                       <div style={styles.metaItem}>
                         <span style={styles.metaIcon}>🎬</span>
                         <span style={styles.metaLabel}>Publisher</span>
@@ -770,7 +723,7 @@ function Dashboard() {
                         <span style={styles.metaValue}>{video.ageRating || 'N/A'}</span>
                       </div>
                     </div>
-                    
+
                     <div style={styles.ratingDisplay}>
                       <span style={{ fontSize: '1.25rem' }}>⭐</span>
                       <span>{calculateAverageRating(video)}</span>
@@ -781,7 +734,7 @@ function Dashboard() {
                       {/* Rating Section */}
                       <div>
                         <label style={styles.sectionLabel}>Rate this video</label>
-                        <div style={styles.ratingControls}>
+                        <div style={styles.ratingControls} className="rating-controls">
                           <select
                             value={ratings[video._id] || 0}
                             onChange={(e) =>
@@ -795,8 +748,8 @@ function Dashboard() {
                               <option key={s} value={s}>⭐ {s}</option>
                             ))}
                           </select>
-                          <button 
-                            onClick={() => handleRating(video._id)} 
+                          <button
+                            onClick={() => handleRating(video._id)}
                             style={styles.primaryButton}
                             className="primary-button"
                           >
@@ -819,8 +772,8 @@ function Dashboard() {
                             style={styles.commentInput}
                             className="comment-input"
                           />
-                          <button 
-                            onClick={() => handleComment(video._id)} 
+                          <button
+                            onClick={() => handleComment(video._id)}
                             style={styles.secondaryButton}
                             className="secondary-button"
                           >
@@ -855,8 +808,8 @@ function Dashboard() {
 
                     {/* Action Buttons */}
                     <div style={styles.videoActions}>
-                      <Link 
-                        to={`/video/${video._id}`} 
+                      <Link
+                        to={`/video/${video._id}`}
                         style={styles.featuredButton}
                         className="featured-button"
                       >
