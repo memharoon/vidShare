@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useNavigate, Link } from 'react-router-dom';
+import { api } from '../api'; // ⬅️ use the shared axios instance (has baseURL + JWT)
 
 function Register() {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    role: 'consumer', // default role
+    role: 'viewer', // ⬅️ use "viewer" to match backend (instead of "consumer")
   });
 
   const [message, setMessage] = useState('');
@@ -18,23 +18,18 @@ function Register() {
 
   useEffect(() => {
     setIsVisible(true);
-    
     const handleMouseMove = (e) => {
       setMousePosition({
         x: (e.clientX / window.innerWidth) * 100,
         y: (e.clientY / window.innerHeight) * 100,
       });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
   const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const handleSubmit = async (e) => {
@@ -42,11 +37,15 @@ function Register() {
     setMessage('');
     setIsLoading(true);
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/register', formData);
+      const { data } = await api.post('/api/auth/register', formData);
+      // backend returns { message: 'User registered successfully' }
+      // If in future it returns a token, store it too:
+      if (data?.token) localStorage.setItem('token', data.token);
+
       setMessage('✅ Registration successful!');
-      setTimeout(() => navigate('/login'), 1000);
+      setTimeout(() => navigate('/login'), 800);
     } catch (err) {
-      setMessage(err.response?.data?.error || '❌ Registration failed.');
+      setMessage(err?.response?.data?.error || '❌ Registration failed.');
     } finally {
       setIsLoading(false);
     }
@@ -64,238 +63,109 @@ function Register() {
     },
     mouseGradient: {
       position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
+      top: 0, left: 0, right: 0, bottom: 0,
       opacity: 0.3,
       background: `radial-gradient(circle at ${mousePosition.x}% ${mousePosition.y}%, rgba(147, 51, 234, 0.3) 0%, transparent 50%)`
     },
-    // Header/Navbar styles
     navbar: {
-      position: 'relative',
-      zIndex: 20,
-      display: 'flex',
-      justifyContent: 'space-between',
-      alignItems: 'center',
+      position: 'relative', zIndex: 20, display: 'flex',
+      justifyContent: 'space-between', alignItems: 'center',
       padding: '16px 32px',
       background: 'rgba(255, 255, 255, 0.05)',
       backdropFilter: 'blur(10px)',
       borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
     },
-    navLeft: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '24px'
-    },
-    navBrand: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      textDecoration: 'none'
-    },
+    navLeft: { display: 'flex', alignItems: 'center', gap: '24px' },
+    navBrand: { display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none' },
     navBrandIcon: {
       padding: '8px',
       background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-      borderRadius: '50%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
+      borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center'
     },
     navBrandText: {
-      fontSize: '1.5rem',
-      fontWeight: 'bold',
+      fontSize: '1.5rem', fontWeight: 'bold',
       background: 'linear-gradient(135deg, #ffffff, #c4b5fd)',
-      WebkitBackgroundClip: 'text',
-      WebkitTextFillColor: 'transparent',
-      backgroundClip: 'text',
+      WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
     },
-    navRight: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '16px'
-    },
+    navRight: { display: 'flex', alignItems: 'center', gap: '16px' },
     navLink: {
-      color: '#d1d5db',
-      textDecoration: 'none',
-      padding: '8px 16px',
-      borderRadius: '8px',
-      transition: 'all 0.3s ease',
-      fontWeight: '500'
+      color: '#d1d5db', textDecoration: 'none', padding: '8px 16px',
+      borderRadius: '8px', transition: 'all 0.3s ease', fontWeight: '500'
     },
-    // Main content styles
     content: {
-      position: 'relative',
-      zIndex: 10,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flex: 1,
-      padding: '40px 20px',
+      position: 'relative', zIndex: 10, display: 'flex',
+      alignItems: 'center', justifyContent: 'center', flex: 1, padding: '40px 20px',
     },
     registerContainer: {
       opacity: isVisible ? 1 : 0,
       transform: isVisible ? 'translateY(0)' : 'translateY(40px)',
       transition: 'all 1s ease-out',
-      width: '100%',
-      maxWidth: '420px',
-      padding: '40px',
-      background: 'rgba(255, 255, 255, 0.08)',
-      backdropFilter: 'blur(20px)',
-      borderRadius: '24px',
-      border: '1px solid rgba(255, 255, 255, 0.15)',
+      width: '100%', maxWidth: '420px', padding: '40px',
+      background: 'rgba(255, 255, 255, 0.08)', backdropFilter: 'blur(20px)',
+      borderRadius: '24px', border: '1px solid rgba(255, 255, 255, 0.15)',
       boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
     },
     logoSection: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '12px',
-      marginBottom: '32px'
+      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '32px'
     },
     logoIcon: {
-      padding: '12px',
-      background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
-      borderRadius: '50%',
-      boxShadow: '0 8px 32px rgba(147, 51, 234, 0.3)'
+      padding: '12px', background: 'linear-gradient(135deg, #ec4899, #8b5cf6)',
+      borderRadius: '50%', boxShadow: '0 8px 32px rgba(147, 51, 234, 0.3)'
     },
     title: {
-      fontSize: '2rem',
-      fontWeight: 'bold',
+      fontSize: '2rem', fontWeight: 'bold',
       background: 'linear-gradient(135deg, #ffffff, #c4b5fd)',
-      WebkitBackgroundClip: 'text',
-      WebkitTextFillColor: 'transparent',
-      backgroundClip: 'text',
-      margin: 0
+      WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', margin: 0
     },
-    subtitle: {
-      textAlign: 'center',
-      color: '#d1d5db',
-      marginBottom: '32px',
-      fontSize: '1rem'
-    },
-    form: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '20px'
-    },
-    inputGroup: {
-      position: 'relative'
-    },
+    subtitle: { textAlign: 'center', color: '#d1d5db', marginBottom: '32px', fontSize: '1rem' },
+    form: { display: 'flex', flexDirection: 'column', gap: '20px' },
+    inputGroup: { position: 'relative' },
     input: {
-      width: '100%',
-      padding: '16px 20px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      borderRadius: '12px',
-      color: 'white',
-      fontSize: '16px',
-      outline: 'none',
-      transition: 'all 0.3s ease',
-      backdropFilter: 'blur(10px)',
-      boxSizing: 'border-box'
+      width: '100%', padding: '16px 20px', background: 'rgba(255, 255, 255, 0.1)',
+      border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '12px', color: 'white',
+      fontSize: '16px', outline: 'none', transition: 'all 0.3s ease',
+      backdropFilter: 'blur(10px)', boxSizing: 'border-box'
     },
     select: {
-      width: '100%',
-      padding: '16px 20px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
-      borderRadius: '12px',
-      color: 'white',
-      fontSize: '16px',
-      outline: 'none',
-      transition: 'all 0.3s ease',
-      backdropFilter: 'blur(10px)',
-      boxSizing: 'border-box',
-      cursor: 'pointer'
+      width: '100%', padding: '16px 20px', background: 'rgba(255, 255, 255, 0.1)',
+      border: '1px solid rgba(255, 255, 255, 0.2)', borderRadius: '12px', color: 'white',
+      fontSize: '16px', outline: 'none', transition: 'all 0.3s ease',
+      backdropFilter: 'blur(10px)', boxSizing: 'border-box', cursor: 'pointer'
     },
-    selectLabel: {
-      color: '#d1d5db',
-      fontSize: '14px',
-      fontWeight: '500',
-      marginBottom: '8px',
-      display: 'block'
-    },
+    selectLabel: { color: '#d1d5db', fontSize: '14px', fontWeight: '500', marginBottom: '8px', display: 'block' },
     submitButton: {
-      width: '100%',
-      padding: '16px',
+      width: '100%', padding: '16px',
       background: isLoading ? 'rgba(147, 51, 234, 0.6)' : 'linear-gradient(135deg, #9333ea, #ec4899)',
-      color: 'white',
-      border: 'none',
-      borderRadius: '12px',
-      fontWeight: '600',
-      fontSize: '16px',
-      cursor: isLoading ? 'not-allowed' : 'pointer',
-      transition: 'all 0.3s ease',
-      boxShadow: '0 8px 32px rgba(147, 51, 234, 0.25)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: '8px',
-      marginTop: '8px'
+      color: 'white', border: 'none', borderRadius: '12px', fontWeight: '600',
+      fontSize: '16px', cursor: isLoading ? 'not-allowed' : 'pointer', transition: 'all 0.3s ease',
+      boxShadow: '0 8px 32px rgba(147, 51, 234, 0.25)', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '8px'
     },
     message: {
-      padding: '12px 16px',
-      borderRadius: '8px',
-      textAlign: 'center',
-      fontSize: '14px',
-      fontWeight: '500',
-      background: message.includes('✅') 
-        ? 'rgba(34, 197, 94, 0.1)' 
-        : 'rgba(239, 68, 68, 0.1)',
-      border: message.includes('✅') 
-        ? '1px solid rgba(34, 197, 94, 0.3)' 
-        : '1px solid rgba(239, 68, 68, 0.3)',
-      color: message.includes('✅') ? '#22c55e' : '#ef4444',
-      marginBottom: '20px'
+      padding: '12px 16px', borderRadius: '8px', textAlign: 'center',
+      fontSize: '14px', fontWeight: '500',
+      background: message.includes('✅') ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+      border: message.includes('✅') ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+      color: message.includes('✅') ? '#22c55e' : '#ef4444', marginBottom: '20px'
     },
-    divider: {
-      display: 'flex',
-      alignItems: 'center',
-      margin: '24px 0',
-      gap: '16px'
-    },
-    dividerLine: {
-      flex: 1,
-      height: '1px',
-      background: 'rgba(255, 255, 255, 0.2)'
-    },
-    dividerText: {
-      color: '#9ca3af',
-      fontSize: '14px'
-    },
+    divider: { display: 'flex', alignItems: 'center', margin: '24px 0', gap: '16px' },
+    dividerLine: { flex: 1, height: '1px', background: 'rgba(255, 255, 255, 0.2)' },
+    dividerText: { color: '#9ca3af', fontSize: '14px' },
     loginSection: {
-      textAlign: 'center',
-      marginTop: '24px',
-      padding: '20px',
-      background: 'rgba(255, 255, 255, 0.05)',
-      borderRadius: '12px',
+      textAlign: 'center', marginTop: '24px', padding: '20px',
+      background: 'rgba(255, 255, 255, 0.05)', borderRadius: '12px',
       border: '1px solid rgba(255, 255, 255, 0.1)'
     },
-    loginText: {
-      color: '#d1d5db',
-      marginBottom: '12px'
-    },
+    loginText: { color: '#d1d5db', marginBottom: '12px' },
     loginButton: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '12px 24px',
-      background: 'rgba(255, 255, 255, 0.1)',
-      color: 'white',
-      textDecoration: 'none',
-      borderRadius: '8px',
-      fontWeight: '500',
-      transition: 'all 0.3s ease',
+      display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '12px 24px',
+      background: 'rgba(255, 255, 255, 0.1)', color: 'white', textDecoration: 'none',
+      borderRadius: '8px', fontWeight: '500', transition: 'all 0.3s ease',
       border: '1px solid rgba(255, 255, 255, 0.2)'
     },
     loadingSpinner: {
-      width: '20px',
-      height: '20px',
-      border: '2px solid rgba(255, 255, 255, 0.3)',
-      borderTop: '2px solid white',
-      borderRadius: '50%',
-      animation: 'spin 1s linear infinite'
+      width: '20px', height: '20px', border: '2px solid rgba(255, 255, 255, 0.3)',
+      borderTop: '2px solid white', borderRadius: '50%', animation: 'spin 1s linear infinite'
     }
   };
 
@@ -303,33 +173,13 @@ function Register() {
     <div style={styles.container}>
       <style>
         {`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-          .input:focus, .select:focus {
-            border-color: rgba(147, 51, 234, 0.6) !important;
-            box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.1) !important;
-          }
-          .input::placeholder {
-            color: rgba(255, 255, 255, 0.6);
-          }
-          .select option {
-            background: #1e293b;
-            color: white;
-          }
-          .submit-button:hover:not(:disabled) {
-            transform: translateY(-2px) !important;
-            box-shadow: 0 12px 40px rgba(147, 51, 234, 0.4) !important;
-          }
-          .nav-link:hover {
-            background: rgba(255, 255, 255, 0.1) !important;
-            color: #ffffff !important;
-          }
-          .login-button:hover {
-            background: rgba(255, 255, 255, 0.2) !important;
-            transform: translateY(-2px) !important;
-          }
+          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+          .input:focus, .select:focus { border-color: rgba(147, 51, 234, 0.6) !important; box-shadow: 0 0 0 3px rgba(147, 51, 234, 0.1) !important; }
+          .input::placeholder { color: rgba(255, 255, 255, 0.6); }
+          .select option { background: #1e293b; color: white; }
+          .submit-button:hover:not(:disabled) { transform: translateY(-2px) !important; box-shadow: 0 12px 40px rgba(147, 51, 234, 0.4) !important; }
+          .nav-link:hover { background: rgba(255, 255, 255, 0.1) !important; color: #ffffff !important; }
+          .login-button:hover { background: rgba(255, 255, 255, 0.2) !important; transform: translateY(-2px) !important; }
           @media (max-width: 768px) {
             .navbar { flex-direction: column; gap: 16px; padding: 16px; }
             .nav-left, .nav-right { flex-wrap: wrap; justify-content: center; }
@@ -339,104 +189,56 @@ function Register() {
       </style>
 
       <div style={styles.mouseGradient} />
-      
-      {/* Navigation Header */}
-      <nav style={styles.navbar}>
-        <div style={styles.navLeft}>
+
+      <nav style={styles.navbar} className="navbar">
+        <div style={styles.navLeft} className="nav-left">
           <Link to="/" style={styles.navBrand}>
             <div style={styles.navBrandIcon}>
-              <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
+              <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
             </div>
             <span style={styles.navBrandText}>VidShare</span>
           </Link>
         </div>
-
-        <div style={styles.navRight}>
+        <div style={styles.navRight} className="nav-right">
           <Link to="/login" style={styles.navLink} className="nav-link">Login</Link>
-         
         </div>
       </nav>
-      
-      {/* Main Content */}
+
       <div style={styles.content}>
         <div style={styles.registerContainer} className="register-container">
           <div style={styles.logoSection}>
             <div style={styles.logoIcon}>
-              <svg width="24" height="24" fill="white" viewBox="0 0 24 24">
-                <path d="M8 5v14l11-7z"/>
-              </svg>
+              <svg width="24" height="24" fill="white" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
             </div>
             <h1 style={styles.title}>Join VidShare</h1>
           </div>
-          
-          <p style={styles.subtitle}>
-            Create your account and start sharing
-          </p>
+
+          <p style={styles.subtitle}>Create your account and start sharing</p>
 
           {message && <div style={styles.message}>{message}</div>}
-          
+
           <form onSubmit={handleSubmit} style={styles.form}>
             <div style={styles.inputGroup}>
-              <input
-                name="name"
-                type="text"
-                placeholder="Full Name"
-                value={formData.name}
-                onChange={handleChange}
-                required
-                style={styles.input}
-                className="input"
-              />
+              <input name="name" type="text" placeholder="Full Name" value={formData.name} onChange={handleChange} required style={styles.input} className="input" />
             </div>
 
             <div style={styles.inputGroup}>
-              <input
-                name="email"
-                type="email"
-                placeholder="Email address"
-                value={formData.email}
-                onChange={handleChange}
-                required
-                style={styles.input}
-                className="input"
-              />
+              <input name="email" type="email" placeholder="Email address" value={formData.email} onChange={handleChange} required style={styles.input} className="input" />
             </div>
-            
+
             <div style={styles.inputGroup}>
-              <input
-                name="password"
-                type="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                style={styles.input}
-                className="input"
-              />
+              <input name="password" type="password" placeholder="Password" value={formData.password} onChange={handleChange} required style={styles.input} className="input" />
             </div>
 
             <div style={styles.inputGroup}>
               <label style={styles.selectLabel}>Register As:</label>
-              <select 
-                name="role" 
-                value={formData.role} 
-                onChange={handleChange} 
-                style={styles.select}
-                className="select"
-              >
-                <option value="consumer">Consumer</option>
+              <select name="role" value={formData.role} onChange={handleChange} style={styles.select} className="select">
+                <option value="viewer">Viewer</option>
                 <option value="creator">Creator</option>
               </select>
             </div>
-            
-            <button 
-              type="submit" 
-              style={styles.submitButton}
-              className="submit-button"
-              disabled={isLoading}
-            >
+
+            <button type="submit" style={styles.submitButton} className="submit-button" disabled={isLoading}>
               {isLoading ? (
                 <>
                   <div style={styles.loadingSpinner}></div>
@@ -465,9 +267,7 @@ function Register() {
           <div style={styles.loginSection}>
             <p style={styles.loginText}>Already have an account?</p>
             <Link to="/login" style={styles.loginButton} className="login-button">
-              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4m-5-4l4-4-4-4m5 8H3"/>
-              </svg>
+              <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4m-5-4l4-4-4-4m5 8H3"/></svg>
               <span>Sign In</span>
             </Link>
           </div>
