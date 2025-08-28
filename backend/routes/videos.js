@@ -4,10 +4,27 @@ const { getBlobSasUrl } = require('../storage/blob');
 
 const router = express.Router();
 
+const TTL_SECONDS = 3600; // 1h SAS for playback/poster
+
+// Helper: if no explicit thumbnail provided, derive one like "<name>-thumb.jpg"
+function deriveThumbName(blobName = '') {
+  if (!blobName) return null;
+  const dot = blobName.lastIndexOf('.');
+  const base = dot > -1 ? blobName.slice(0, dot) : blobName;
+  return `${base}-thumb.jpg`;
+}
+
 /**
  * POST /api/videos
  * Save metadata only (file is already in Azure Blob via SAS).
- * Expects JSON: { title, publisher, producer, genre, ageRating, blobName, container? }
+ * Expects JSON:
+ * {
+ *   title, publisher, producer, genre, ageRating,
+ *   blobName, container? (default 'videos'),
+ *   // optional, if you already generated a thumbnail client-side:
+ *   thumbnailBlobName?, thumbnailContainer?, posterAt?, thumbnailMimeType?,
+ *   storage?, mimeType?, originalName?, size?
+ * }
  */
 router.post('/', async (req, res) => {
   try {
@@ -19,6 +36,16 @@ router.post('/', async (req, res) => {
       ageRating,
       blobName,
       container = 'videos',
+
+      // optional extras
+      thumbnailBlobName,
+      thumbnailContainer,
+      posterAt,
+      thumbnailMimeType,
+      storage = 'azure',
+      mimeType,
+      originalName,
+      size,
     } = req.body;
 
     if (!blobName) return res.status(400).json({ error: 'blobName required' });
@@ -32,14 +59,42 @@ router.post('/', async (req, res) => {
       ageRating,
       blobName,
       container,
+      storage,
+      mimeType,
+      originalName,
+      size,
+      thumbnailBlobName: thumbnailBlobName || undefined,
+      thumbnailContainer: thumbnailContainer || undefined,
+      posterAt: typeof posterAt === 'number' ? posterAt : undefined,
+      thumbnailMimeType: thumbnailMimeType || undefined,
       comments: [],
       ratings: [],
       uploadedAt: new Date(),
     });
 
+    // Playback SAS
+    let playbackUrl;
+    try {
+      playbackUrl = getBlobSasUrl(newVideo.blobName, TTL_SECONDS, 'r');
+    } catch (e) {
+      playbackUrl = null;
+    }
+
+    // Poster/thumbnail SAS (prefer provided thumbnailBlobName, else derive)
+    const thumbName = newVideo.thumbnailBlobName || deriveThumbName(newVideo.blobName);
+    let posterUrl = null;
+    if (thumbName) {
+      try {
+        posterUrl = getBlobSasUrl(thumbName, TTL_SECONDS, 'r');
+      } catch (e) {
+        posterUrl = null;
+      }
+    }
+
     return res.status(201).json({
       ...newVideo.toObject(),
-      playbackUrl: getBlobSasUrl(newVideo.blobName, 3600, 'r'), // 1h read SAS
+      playbackUrl,
+      posterUrl,
     });
   } catch (err) {
     console.error('Save metadata failed:', err);
@@ -49,15 +104,35 @@ router.post('/', async (req, res) => {
 
 /**
  * GET /api/videos
- * Return videos with short-lived read SAS URLs for playback.
+ * Return videos with short-lived read SAS URLs for playback and poster.
  */
 router.get('/', async (req, res) => {
   try {
     const videos = await Video.find().sort({ uploadedAt: -1 }).lean();
-    const withUrls = videos.map((v) => ({
-      ...v,
-      playbackUrl: getBlobSasUrl(v.blobName, 3600, 'r'),
-    }));
+
+    const withUrls = videos.map((v) => {
+      // playback
+      let playbackUrl = null;
+      try {
+        playbackUrl = getBlobSasUrl(v.blobName, TTL_SECONDS, 'r');
+      } catch (e) {
+        playbackUrl = null;
+      }
+
+      // poster (prefer stored thumbnail, else derive)
+      const thumbName = v.thumbnailBlobName || deriveThumbName(v.blobName);
+      let posterUrl = null;
+      if (thumbName) {
+        try {
+          posterUrl = getBlobSasUrl(thumbName, TTL_SECONDS, 'r');
+        } catch (e) {
+          posterUrl = null;
+        }
+      }
+
+      return { ...v, playbackUrl, posterUrl };
+    });
+
     res.json(withUrls);
   } catch (err) {
     console.error('Fetch videos failed:', err);
