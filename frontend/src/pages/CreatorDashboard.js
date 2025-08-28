@@ -569,16 +569,7 @@ function CreatorDashboard() {
               <div style={styles.videoGrid}>
                 {filteredVideos.map((video) => (
                   <div style={styles.videoCard} key={video._id} className="video-card">
-                    <video
-                      style={styles.videoElement}
-                      poster={video.thumbnailUrl}
-                      muted
-                      playsInline
-                      preload="metadata"
-                      onMouseEnter={(e) => { e.currentTarget.currentTime = 0; e.currentTarget.play().catch(()=>{}); }}
-                      onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
-                      controls={false}
-                    >
+                    <video style={styles.videoElement} controls>
                       <source src={video.playbackUrl || video.videoUrl} type="video/mp4" />
                       Your browser does not support the video tag.
                     </video>
@@ -597,4 +588,38 @@ function CreatorDashboard() {
                     
                     <div style={styles.statsContainer}>
                       <div style={{...styles.statBadge, ...styles.viewsBadge}}>
-                        <svg width="12" height="12" fill="currentColor"
+                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        <span>{video.views || 0} views</span>
+                      </div>
+                      <div style={{...styles.statBadge, ...styles.dateBadge}}>
+                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 24 24">
+                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                          <line x1="16" y1="2" x2="16" y2="6"/>
+                          <line x1="8" y1="2" x2="8" y2="6"/>
+                          <line x1="3" y1="10" x2="21" y2="10"/>
+                        </svg>
+                        <span>{new Date(video.uploadedAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                    
+                    <Link to={`/video/${video._id}`} style={styles.viewButton} className="view-button">
+                      <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
+                        <polygon points="5,3 19,12 5,21"/>
+                      </svg>
+                      <span>Watch Video</span>
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default CreatorDashboard;
