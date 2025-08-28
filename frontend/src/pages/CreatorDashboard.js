@@ -1,10 +1,10 @@
+
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import { Link, useNavigate } from 'react-router-dom';
 
 function CreatorDashboard() {
   const [videos, setVideos] = useState([]);
-  const [thumbUrls, setThumbUrls] = useState({}); // videoId -> thumbnail SAS URL
   const [search, setSearch] = useState('');
   const [genreFilter, setGenreFilter] = useState('');
   const [message, setMessage] = useState('');
@@ -28,41 +28,6 @@ function CreatorDashboard() {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // helper: build a reasonable thumbnail blob path if backend didn't send one
-  const guessThumbBlobName = (video) => {
-    if (video.thumbnailBlobName) return video.thumbnailBlobName;
-    const name = (video.blobName || '').split('/').pop() || '';
-    const base = name.replace(/\.[^/.]+$/, '');
-    if (!base) return '';
-    return `thumbs/${base}.jpg`;
-  };
-
-  // fetch SAS poster URLs for each video (read-only)
-  const prepareThumbnails = async (list) => {
-    const entries = await Promise.all(
-      list.map(async (v) => {
-        try {
-          // if backend already sent a thumbnail URL, use it
-          if (v.thumbnailPlaybackUrl || v.thumbnailUrl) {
-            return [v._id, v.thumbnailPlaybackUrl || v.thumbnailUrl];
-          }
-          const thumbBlobName = guessThumbBlobName(v);
-          if (!thumbBlobName) return [v._id, null];
-
-          const { data } = await api.get('/api/media/sas', {
-            params: { blobName: thumbBlobName, ttl: 3600, perm: 'r' },
-          });
-          return [v._id, data.sasUrl || null];
-        } catch {
-          return [v._id, null];
-        }
-      })
-    );
-    const map = {};
-    entries.forEach(([id, url]) => { map[id] = url; });
-    setThumbUrls(map);
-  };
-
   useEffect(() => {
     const token = localStorage.getItem('token');
     setIsLoading(true);
@@ -71,11 +36,8 @@ function CreatorDashboard() {
         Authorization: `Bearer ${token}`
       }
     })
-      .then(async (res) => {
-        const list = Array.isArray(res.data) ? res.data : [];
-        setVideos(list);
-        // kick off poster prep (non-blocking UI)
-        prepareThumbnails(list);
+      .then((res) => {
+        setVideos(res.data);
         setIsLoading(false);
       })
       .catch((err) => {
@@ -98,26 +60,10 @@ function CreatorDashboard() {
 
   const filteredVideos = videos.filter((video) => {
     return (
-      (video.title || '').toLowerCase().includes(search.toLowerCase()) &&
-      (video.genre || '').toLowerCase().includes(genreFilter.toLowerCase())
+      video.title?.toLowerCase().includes(search.toLowerCase()) &&
+      video.genre?.toLowerCase().includes(genreFilter.toLowerCase())
     );
   });
-
-  // hover handlers for inline preview
-  const handleHoverPlay = (e) => {
-    const el = e.currentTarget;
-    try {
-      el.muted = true; // autoplay policy
-      el.play().catch(() => {});
-    } catch {}
-  };
-  const handleHoverStop = (e) => {
-    const el = e.currentTarget;
-    try {
-      el.pause();
-      el.currentTime = 0;
-    } catch {}
-  };
 
   const styles = {
     container: {
@@ -349,8 +295,7 @@ function CreatorDashboard() {
       width: '100%',
       borderRadius: '12px',
       marginBottom: '16px',
-      maxHeight: '200px',
-      background: '#000'
+      maxHeight: '200px'
     },
     videoTitle: {
       color: 'white',
@@ -625,18 +570,7 @@ function CreatorDashboard() {
               <div style={styles.videoGrid}>
                 {filteredVideos.map((video) => (
                   <div style={styles.videoCard} key={video._id} className="video-card">
-                    <video
-                      style={styles.videoElement}
-                      // thumbnail shows first
-                      poster={thumbUrls[video._id] || undefined}
-                      // preview on hover
-                      onMouseEnter={handleHoverPlay}
-                      onMouseLeave={handleHoverStop}
-                      muted
-                      loop
-                      playsInline
-                      preload="metadata"
-                    >
+                    <video style={styles.videoElement} controls>
                       <source src={video.playbackUrl || video.videoUrl} type="video/mp4" />
                       Your browser does not support the video tag.
                     </video>
