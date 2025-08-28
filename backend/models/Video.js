@@ -19,7 +19,6 @@ const videoSchema = new mongoose.Schema({
   title: { type: String, required: true },
   blobName: { type: String, required: true },          // e.g., 'myvideo.mp4'
   container: { type: String, default: 'videos' },      // e.g., 'videos'
-  thumbnailBlobName: { type: String },                 // <-- NEW: e.g., '...-thumb.jpg'
   publisher: String,
   producer: String,
   genre: String,
