@@ -7,7 +7,7 @@ const router = express.Router();
 /**
  * POST /api/videos
  * Save metadata only (file is already in Azure Blob via SAS).
- * Expects JSON: { title, publisher, producer, genre, ageRating, blobName, container? }
+ * Expects JSON: { title, publisher, producer, genre, ageRating, blobName, thumbnailBlobName?, container? }
  */
 router.post('/', async (req, res) => {
   try {
@@ -18,6 +18,7 @@ router.post('/', async (req, res) => {
       genre,
       ageRating,
       blobName,
+      thumbnailBlobName,                 // <-- NEW
       container = 'videos',
     } = req.body;
 
@@ -31,6 +32,7 @@ router.post('/', async (req, res) => {
       genre,
       ageRating,
       blobName,
+      thumbnailBlobName,                 // <-- NEW
       container,
       comments: [],
       ratings: [],
@@ -39,7 +41,10 @@ router.post('/', async (req, res) => {
 
     return res.status(201).json({
       ...newVideo.toObject(),
-      playbackUrl: getBlobSasUrl(newVideo.blobName, 3600, 'r'), // 1h read SAS
+      playbackUrl: getBlobSasUrl(newVideo.blobName, 3600, 'r'),
+      thumbnailUrl: newVideo.thumbnailBlobName
+        ? getBlobSasUrl(newVideo.thumbnailBlobName, 3600, 'r')
+        : null,
     });
   } catch (err) {
     console.error('Save metadata failed:', err);
@@ -49,7 +54,7 @@ router.post('/', async (req, res) => {
 
 /**
  * GET /api/videos
- * Return videos with short-lived read SAS URLs for playback.
+ * Return videos with short-lived read SAS URLs for playback (and thumbnail).
  */
 router.get('/', async (req, res) => {
   try {
@@ -57,6 +62,7 @@ router.get('/', async (req, res) => {
     const withUrls = videos.map((v) => ({
       ...v,
       playbackUrl: getBlobSasUrl(v.blobName, 3600, 'r'),
+      thumbnailUrl: v.thumbnailBlobName ? getBlobSasUrl(v.thumbnailBlobName, 3600, 'r') : null,
     }));
     res.json(withUrls);
   } catch (err) {
