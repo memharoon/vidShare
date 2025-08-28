@@ -7,7 +7,7 @@ function Register() {
     name: '',
     email: '',
     password: '',
-    role: 'viewer', // ⬅️ use "viewer" to match backend (instead of "consumer")
+    role: 'consumer', // ⬅️ use "viewer" to match backend (instead of "consumer")
   });
 
   const [message, setMessage] = useState('');
@@ -233,7 +233,7 @@ function Register() {
             <div style={styles.inputGroup}>
               <label style={styles.selectLabel}>Register As:</label>
               <select name="role" value={formData.role} onChange={handleChange} style={styles.select} className="select">
-                <option value="viewer">Viewer</option>
+                <option value="consumer">Consumer</option>
                 <option value="creator">Creator</option>
               </select>
             </div>
