@@ -80,7 +80,76 @@ function UploadPage() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  // ---- UPDATED: direct-to-Blob upload via SAS, then save metadata ----
+  // ---- helper: generate a JPEG thumbnail from the first second of the video ----
+  const generateThumbnail = (file) => {
+    return new Promise((resolve, reject) => {
+      try {
+        const video = document.createElement('video');
+        video.preload = 'metadata';
+        video.muted = true;
+        video.playsInline = true;
+
+        const url = URL.createObjectURL(file);
+        video.src = url;
+
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          video.removeAttribute('src');
+          video.load();
+        };
+
+        video.onloadedmetadata = () => {
+          // pick a safe capture time
+          let t = 1;
+          if (isFinite(video.duration) && video.duration > 0) {
+            t = Math.min(1, Math.max(0, video.duration - 0.1));
+          }
+          video.currentTime = t;
+        };
+
+        video.onseeked = () => {
+          try {
+            // target width 480px, keep aspect
+            const maxW = 480;
+            const ratio = video.videoWidth / video.videoHeight || 16 / 9;
+            const w = Math.min(maxW, video.videoWidth || maxW);
+            const h = Math.round(w / ratio);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, w, h);
+            canvas.toBlob(
+              (blob) => {
+                cleanup();
+                if (blob) {
+                  resolve({ blob, width: w, height: h });
+                } else {
+                  reject(new Error('Failed to create thumbnail blob'));
+                }
+              },
+              'image/jpeg',
+              0.85
+            );
+          } catch (err) {
+            cleanup();
+            reject(err);
+          }
+        };
+
+        video.onerror = () => {
+          cleanup();
+          reject(new Error('Could not load video for thumbnail'));
+        };
+      } catch (err) {
+        reject(err);
+      }
+    });
+  };
+
+  // ---- UPDATED: direct-to-Blob upload via SAS, then save metadata (+ thumbnail) ----
   const handleUpload = async () => {
     if (!videoFile || !formData.title.trim()) {
       setMessage('❗ Please provide a title and select a video.');
@@ -103,14 +172,13 @@ function UploadPage() {
       const safeName = videoFile.name.replace(/\s+/g, '-');
       const blobName = `${uid}-${safeName}`;
 
-      // 1) Ask backend for a SAS with create+write perms
-      //    GET /api/media/sas?blobName=<...>&ttl=3600&perm=cw
+      // 1) Ask backend for a SAS with create+write perms for the VIDEO
       const { data: sasResp } = await api.get('/api/media/sas', {
         params: { blobName, ttl: 3600, perm: 'cw' },
       });
       const sasUrl = sasResp.sasUrl;
 
-      // 2) PUT the file to Azure Blob Storage (track progress)
+      // 2) PUT the video file to Azure Blob Storage (track progress)
       await axios.put(sasUrl, videoFile, {
         headers: {
           'x-ms-blob-type': 'BlockBlob',
@@ -118,15 +186,39 @@ function UploadPage() {
         },
         onUploadProgress: (evt) => {
           if (evt.total) {
-            const pct = Math.min(99, (evt.loaded / evt.total) * 100);
+            const pct = Math.min(95, (evt.loaded / evt.total) * 100);
             setUploadProgress(pct);
           }
         },
       });
 
-      setUploadProgress(100);
+      // 3) Create and upload a thumbnail to the SAME container under a "thumbs/" prefix
+      setUploadProgress((p) => Math.max(p, 96));
+      let thumbnailBlobName = '';
+      try {
+        const { blob: thumbBlob } = await generateThumbnail(videoFile);
+        const base = safeName.replace(/\.[^/.]+$/, ''); // strip extension
+        thumbnailBlobName = `thumbs/${uid}-${base}.jpg`;
 
-      // 3) Save metadata in Mongo via backend
+        const { data: thumbSas } = await api.get('/api/media/sas', {
+          params: { blobName: thumbnailBlobName, ttl: 3600, perm: 'cw' },
+        });
+
+        await axios.put(thumbSas.sasUrl, thumbBlob, {
+          headers: {
+            'x-ms-blob-type': 'BlockBlob',
+            'x-ms-blob-content-type': 'image/jpeg',
+          },
+        });
+      } catch (thumbErr) {
+        console.warn('Thumbnail generation/upload failed:', thumbErr);
+        // continue without blocking the video upload
+        thumbnailBlobName = '';
+      }
+
+      setUploadProgress(99);
+
+      // 4) Save metadata in Mongo via backend
       setAuthToken(token); // sets Authorization header on our shared axios instance
       await api.post('/api/videos', {
         title: formData.title,
@@ -135,8 +227,11 @@ function UploadPage() {
         publisher: formData.publisher,
         producer: formData.producer,
 
-        // Store blobName; Dashboard will request a read SAS to play it
+        // Store blobName; Dashboards will request a read SAS to play it
         blobName,
+
+        // Optional: store thumbnail blob path (backend will be updated to return a signed URL)
+        thumbnailBlobName,
 
         // Back-compat if your backend used `videoUrl` earlier
         videoUrl: blobName,
@@ -147,6 +242,7 @@ function UploadPage() {
         size: videoFile.size,
       });
 
+      setUploadProgress(100);
       setMessage('✅ Video uploaded successfully!');
       setTimeout(() => {
         setFormData({ title: '', publisher: '', producer: '', genre: '', ageRating: '' });
