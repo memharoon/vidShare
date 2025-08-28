@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react'; 
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { api } from '../api'; // ✅ use shared axios instance (baseURL + auth interceptor)
 
 function Login() {
   const [credentials, setCredentials] = useState({ email: '', password: '' });
@@ -12,14 +12,12 @@ function Login() {
 
   useEffect(() => {
     setIsVisible(true);
-    
     const handleMouseMove = (e) => {
       setMousePosition({
         x: (e.clientX / window.innerWidth) * 100,
         y: (e.clientY / window.innerHeight) * 100,
       });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
@@ -36,14 +34,24 @@ function Login() {
     setMessage('');
     setIsLoading(true);
     try {
-      const res = await axios.post('http://localhost:5000/api/auth/login', credentials);
-      const token = res.data.token;
+      const { data } = await api.post('/api/auth/login', credentials);
+      const token = data?.token;
+      if (!token) throw new Error('No token returned');
+
       localStorage.setItem('token', token);
 
-      // Decode JWT to extract role (from payload)
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const role = payload.role;
-      localStorage.setItem('role', role);
+      // Prefer backend-provided role; fallback to JWT payload if needed.
+      let role = data?.role;
+      if (!role) {
+        try {
+          const payload = JSON.parse(atob(token.split('.')[1] || ''));
+          role = payload?.role || '';
+        } catch {
+          role = '';
+        }
+      }
+      if (role) localStorage.setItem('role', role);
+      localStorage.setItem('isLoggedIn', 'true');
 
       setMessage('✅ Login successful!');
       if (role === 'creator') {
@@ -52,7 +60,7 @@ function Login() {
         navigate('/dashboard');
       }
     } catch (err) {
-      setMessage(err.response?.data?.error || '❌ Login failed.');
+      setMessage(err?.response?.data?.error || '❌ Login failed.');
     } finally {
       setIsLoading(false);
     }
@@ -349,7 +357,6 @@ function Login() {
 
         <div style={styles.navRight}>
           <Link to="/register" style={styles.navLink} className="nav-link">Register</Link>
-          
         </div>
       </nav>
       
@@ -419,8 +426,6 @@ function Login() {
               )}
             </button>
           </form>
-
-         
 
           <div style={styles.divider}>
             <div style={styles.dividerLine}></div>
