@@ -1,7 +1,7 @@
 // src/App.js
 import './styles.css';
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, useNavigate } from 'react-router-dom';
 
 import Home from './pages/Home';
 import Login from './pages/Login';
@@ -14,6 +14,8 @@ import Stats from './pages/Stats';
 import ForgotPassword from './pages/ForgotPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 
+import { setAuthToken } from './api'; // <-- NEW: wire axios default auth header
+
 function AppWrapper() {
   return (
     <Router>
@@ -23,19 +25,30 @@ function AppWrapper() {
 }
 
 function App() {
-  const role = localStorage.getItem('role');
   const navigate = useNavigate();
+
+  // Ensure Axios has the JWT on app load and when the token changes (e.g., login/logout)
+  useEffect(() => {
+    setAuthToken(localStorage.getItem('token') || null);
+
+    const onStorage = (e) => {
+      if (e.key === 'token') {
+        setAuthToken(e.newValue || null);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('role');
+    setAuthToken(null);
     navigate('/login');
   };
 
   return (
     <div className="app-container">
-      
-
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
@@ -52,7 +65,7 @@ function App() {
         />
         <Route
           path="/creator-dashboard"
-          element={<ProtectedRoute element={<CreatorDashboard />} allowedRoles={['creator']} />}
+          element={<ProtectedRoute element={<CreatorDashboard onLogout={handleLogout} />} allowedRoles={['creator']} />}
         />
         <Route
           path="/stats"
